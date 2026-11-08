@@ -1,4 +1,13 @@
 name: Publish Dev Channel
+on:
+  push:
+    branches:
+    - master
+    paths-ignore:
+    - '*.md'
+    - docs/**
+    - .github/workflows/close-inactive-issues.yml
+  workflow_dispatch: null
 env:
   REGISTRY: ghcr.io
 permissions:
@@ -240,12 +249,3 @@ jobs:
         name: qa-workflow-receipt
         path: qa-workflow-receipt.json
         retention-days: 30
-'on':
-  push:
-    branches:
-    - master
-    paths-ignore:
-    - '*.md'
-    - docs/**
-    - .github/workflows/close-inactive-issues.yml
-  workflow_dispatch: null

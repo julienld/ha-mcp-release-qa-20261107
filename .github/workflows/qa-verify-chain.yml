@@ -1,5 +1,5 @@
 name: QA Verify Release Chain
-'on':
+on:
   workflow_run:
     workflows:
     - Sync Integration Mirror

@@ -1,4 +1,8 @@
 name: Release on tag
+on:
+  push:
+    tags:
+    - v*
 permissions:
   contents: write
 concurrency:
@@ -58,7 +62,3 @@ jobs:
         \ delete \"$TAG\" --repo \"$GITHUB_REPOSITORY\" --yes --cleanup-tag || FAILED=1\ndone\nif [ \"$FAILED\" -ne 0 ]; then\n\
         \  echo \"::error::one or more pre-release deletions failed; the next dev build re-runs the prune\"\n  exit 1\nfi\n"
     if: ${{ github.repository == 'julienld/ha-mcp-mirror-qa-20261107' && vars.QA_ARMED == 'true' }}
-'on':
-  push:
-    tags:
-    - v*

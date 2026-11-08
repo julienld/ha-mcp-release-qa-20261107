@@ -1,4 +1,33 @@
 name: Sync Integration Mirror
+on:
+  push:
+    branches:
+    - master
+    paths:
+    - hacs.json
+    - LICENSE
+    - README.md
+    - .github/integration-mirror-readme-prefix.md
+    - scripts/build_mirror_readme.py
+    - .github/integration-mirror-workflows/**
+  workflow_run:
+    workflows:
+    - SemVer Release
+    - Publish Dev Channel
+    types:
+    - completed
+    branches:
+    - master
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: stable re-tags the latest stable release (recovery path when a release run flaked); dev cuts a v<next>-dev.N
+          pre-release from the current master snapshot, pinned to its already-published dev build. Dispatch from master only.
+        type: choice
+        options:
+        - stable
+        - dev
+        default: stable
 permissions:
   contents: read
 concurrency:
@@ -206,32 +235,3 @@ jobs:
         name: qa-workflow-receipt
         path: qa-workflow-receipt.json
         retention-days: 30
-'on':
-  push:
-    branches:
-    - master
-    paths:
-    - hacs.json
-    - LICENSE
-    - README.md
-    - .github/integration-mirror-readme-prefix.md
-    - scripts/build_mirror_readme.py
-    - .github/integration-mirror-workflows/**
-  workflow_run:
-    workflows:
-    - SemVer Release
-    - Publish Dev Channel
-    types:
-    - completed
-    branches:
-    - master
-  workflow_dispatch:
-    inputs:
-      channel:
-        description: stable re-tags the latest stable release (recovery path when a release run flaked); dev cuts a v<next>-dev.N
-          pre-release from the current master snapshot, pinned to its already-published dev build. Dispatch from master only.
-        type: choice
-        options:
-        - stable
-        - dev
-        default: stable

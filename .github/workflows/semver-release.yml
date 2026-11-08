@@ -1,4 +1,12 @@
 name: SemVer Release
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Force a patch when no fix, feat, or perf commit exists
+        required: false
+        default: 'false'
+        type: boolean
 permissions:
   contents: read
 concurrency:
@@ -198,11 +206,3 @@ jobs:
         name: qa-workflow-receipt
         path: qa-workflow-receipt.json
         retention-days: 30
-'on':
-  workflow_dispatch:
-    inputs:
-      force:
-        description: Force a patch when no fix, feat, or perf commit exists
-        required: false
-        default: 'false'
-        type: boolean

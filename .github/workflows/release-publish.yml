@@ -1,4 +1,14 @@
 name: Release Publish
+on:
+  workflow_run:
+    workflows:
+    - SemVer Release
+    types:
+    - completed
+    branches:
+    - main
+    - master
+  workflow_dispatch: null
 env:
   REGISTRY: ghcr.io
 jobs:
@@ -235,13 +245,3 @@ jobs:
         name: qa-workflow-receipt
         path: qa-workflow-receipt.json
         retention-days: 30
-'on':
-  workflow_run:
-    workflows:
-    - SemVer Release
-    types:
-    - completed
-    branches:
-    - main
-    - master
-  workflow_dispatch: null

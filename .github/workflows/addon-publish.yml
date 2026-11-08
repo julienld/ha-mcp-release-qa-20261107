@@ -1,4 +1,17 @@
 name: Home Assistant Add-on Publish
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Add-on version to publish
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version override (leave empty to use config.yaml)
+        required: false
+        type: string
 env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ghcr.io/${{ github.repository }}-addon
@@ -91,16 +104,3 @@ jobs:
         name: qa-workflow-receipt
         path: qa-workflow-receipt.json
         retention-days: 30
-'on':
-  workflow_call:
-    inputs:
-      version:
-        description: Add-on version to publish
-        required: true
-        type: string
-  workflow_dispatch:
-    inputs:
-      version:
-        description: Version override (leave empty to use config.yaml)
-        required: false
-        type: string

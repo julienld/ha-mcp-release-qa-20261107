@@ -1,4 +1,22 @@
 name: Deploy to GitHub Pages
+on:
+  workflow_run:
+    workflows:
+    - SemVer Release
+    types:
+    - completed
+  push:
+    branches:
+    - master
+    paths:
+    - .github/workflows/deploy.yml
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Tag or commit to build the site from (default: the stable tag)'
+        required: false
+        default: stable
+        type: string
 permissions: {}
 concurrency:
   group: pages
@@ -80,21 +98,3 @@ jobs:
         name: qa-workflow-receipt
         path: qa-workflow-receipt.json
         retention-days: 30
-'on':
-  workflow_run:
-    workflows:
-    - SemVer Release
-    types:
-    - completed
-  push:
-    branches:
-    - master
-    paths:
-    - .github/workflows/deploy.yml
-  workflow_dispatch:
-    inputs:
-      ref:
-        description: 'Tag or commit to build the site from (default: the stable tag)'
-        required: false
-        default: stable
-        type: string

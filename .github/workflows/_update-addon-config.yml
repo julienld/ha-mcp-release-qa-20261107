@@ -1,4 +1,45 @@
 name: Update Add-on Config Version
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Version to set in config.yaml (without v prefix)
+        required: true
+        type: string
+      config_path:
+        description: Path to config.yaml to update
+        required: false
+        type: string
+        default: homeassistant-addon/config.yaml
+      commit_message_prefix:
+        description: Prefix for commit message (e.g., "publish dev addon version")
+        required: false
+        type: string
+        default: publish version
+    secrets:
+      RELEASE_APP_ID:
+        required: false
+      RELEASE_APP_PRIVATE_KEY:
+        required: false
+      RELEASE_TOKEN:
+        required: false
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to set in config.yaml (without v prefix). The ghcr addon images for this version MUST already
+          exist.
+        required: true
+        type: string
+      config_path:
+        description: Path to config.yaml to update
+        required: false
+        type: string
+        default: homeassistant-addon/config.yaml
+      commit_message_prefix:
+        description: Prefix for commit message
+        required: false
+        type: string
+        default: publish version
 jobs:
   update-addon-config:
     runs-on: ubuntu-latest
@@ -71,44 +112,3 @@ jobs:
         name: qa-workflow-receipt
         path: qa-workflow-receipt.json
         retention-days: 30
-'on':
-  workflow_call:
-    inputs:
-      version:
-        description: Version to set in config.yaml (without v prefix)
-        required: true
-        type: string
-      config_path:
-        description: Path to config.yaml to update
-        required: false
-        type: string
-        default: homeassistant-addon/config.yaml
-      commit_message_prefix:
-        description: Prefix for commit message (e.g., "publish dev addon version")
-        required: false
-        type: string
-        default: publish version
-    secrets:
-      RELEASE_APP_ID:
-        required: false
-      RELEASE_APP_PRIVATE_KEY:
-        required: false
-      RELEASE_TOKEN:
-        required: false
-  workflow_dispatch:
-    inputs:
-      version:
-        description: Version to set in config.yaml (without v prefix). The ghcr addon images for this version MUST already
-          exist.
-        required: true
-        type: string
-      config_path:
-        description: Path to config.yaml to update
-        required: false
-        type: string
-        default: homeassistant-addon/config.yaml
-      commit_message_prefix:
-        description: Prefix for commit message
-        required: false
-        type: string
-        default: publish version
