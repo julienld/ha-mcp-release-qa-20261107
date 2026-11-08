@@ -298,6 +298,38 @@ def receipt() -> None:
         },
     )
 
+    failed = {
+        job for job, data in needs.items() if data["result"] in {"failure", "cancelled"}
+    }
+    controlled = (
+        os.environ.get("QA_FAIL_DOCKER") == "true"
+        and failed == {"publish_docker"}
+        and needs.get("finalize_github_release", {}).get("result") == "success"
+    )
+    if failed and not controlled and os.environ.get("QA_REPORT_FAILURES") == "true":
+        sha, number = os.environ["QA_OBSERVER_SHA"], os.environ["QA_OBSERVER_PR"]
+        if not re.fullmatch(r"[0-9a-f]{40}", sha) or not number.isdigit():
+            raise ValueError("Unexpected observer identity")
+        stage = os.environ["QA_STAGE"]
+        url = f"https://github.com/{SOURCE}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
+        api(
+            SOURCE,
+            f"statuses/{sha}",
+            fields={
+                "state": "failure",
+                "context": f"Rehearsal / {stage}",
+                "description": "Real workflow job failed",
+                "target_url": url,
+            },
+        )
+        api(
+            SOURCE,
+            f"issues/{number}/comments",
+            fields={
+                "body": f"[Agent] Workflow failure during {stage}: {', '.join(sorted(failed))}. [Run and receipt]({url})."
+            },
+        )
+
 
 def site_marker() -> None:
     context()
@@ -348,6 +380,30 @@ def verify_chain(parent: Path) -> None:
         )
         return
     channel = fields["qa_channel"]
+    if data["parent"].get("conclusion") != "success":
+        if channel != "stable" or os.environ.get("QA_FAIL_DOCKER") != "true":
+            raise ValueError("The producing workflow failed unexpectedly")
+        upstream = Path(os.environ["RUNNER_TEMP"]) / "qa-publisher-receipt"
+        run(
+            [
+                "gh",
+                "run",
+                "download",
+                str(data["parent"]["id"]),
+                "--repo",
+                SOURCE,
+                "--name",
+                "qa-workflow-receipt",
+                "--dir",
+                str(upstream),
+            ]
+        )
+        producer = json.loads((upstream / "qa-workflow-receipt.json").read_text())
+        failures = {j for j, d in producer["needs"].items() if d["result"] == "failure"}
+        assert (
+            failures == {"publish_docker"}
+            and producer["needs"]["finalize_github_release"]["result"] == "success"
+        )
     source_tag = "v" + pin
     source = wait_release(SOURCE, source_tag)
     mirror = wait_release(MIRROR, tag)

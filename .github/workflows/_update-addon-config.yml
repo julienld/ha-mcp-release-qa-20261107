@@ -107,6 +107,11 @@ jobs:
       env:
         QA_NEEDS: ${{ toJSON(needs) }}
         QA_STAGE: ${{ vars.QA_STAGE }}
+        GH_TOKEN: ${{ github.token }}
+        QA_REPORT_FAILURES: 'false'
+        QA_OBSERVER_PR: ${{ vars.QA_OBSERVER_PR }}
+        QA_OBSERVER_SHA: ${{ vars.QA_OBSERVER_SHA }}
+        QA_FAIL_DOCKER: ${{ vars.QA_FAIL_DOCKER }}
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: qa-workflow-receipt
