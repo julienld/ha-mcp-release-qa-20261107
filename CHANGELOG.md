@@ -3,6 +3,33 @@
 <!-- version list -->
 
 
+## v9.1.5 (2026-11-08)
+
+No user-facing changes.
+
+---
+<details>
+<summary>Internal Changes</summary>
+
+
+### Fixed
+
+- **qa**: Merge controlled post-finalization failure scenario
+  ([`0165b87`](https://github.com/julienld/ha-mcp-release-qa-20261107/commit/0165b87f25d3c921fe6105c2289c23b454a2dea7))
+- **qa**: Exercise post-finalization downstream failure
+  ([`88d93b9`](https://github.com/julienld/ha-mcp-release-qa-20261107/commit/88d93b9c71672919459dc94d3fc65330758c988b))
+
+### Chores
+
+- **release**: Merge QA release installation checks
+  ([`ca9dc6f`](https://github.com/julienld/ha-mcp-release-qa-20261107/commit/ca9dc6f67d79296401c6e834132f95a57af35741))
+- **release**: Add actual published ZIP and wheel HA qualification
+  ([`dde1aaf`](https://github.com/julienld/ha-mcp-release-qa-20261107/commit/dde1aaf631d331e8796f98adfdc5764498390bcd))
+- **addon**: Publish version 9.1.4 [skip ci]
+  ([`8d9a54b`](https://github.com/julienld/ha-mcp-release-qa-20261107/commit/8d9a54b668e804e1bc9b9a7195b942750d32c097))
+</details>
+
+
 ## v9.1.4 (2026-11-08)
 
 ### Fixed
