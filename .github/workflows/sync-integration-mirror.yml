@@ -9,6 +9,8 @@ on:
     - README.md
     - .github/integration-mirror-readme-prefix.md
     - scripts/build_mirror_readme.py
+    - scripts/build_component_zip.py
+    - scripts/build_component_zip.py.lock
     - .github/integration-mirror-workflows/**
   workflow_run:
     workflows:
@@ -141,6 +143,7 @@ jobs:
         '
     - name: Stage snapshot
       env:
+        SOURCE_REPOSITORY: ${{ github.repository }}
         VER: ${{ steps.release.outputs.version }}
         PIN: ${{ steps.release.outputs.pin }}
         DIST: ${{ steps.release.outputs.dist }}
@@ -153,11 +156,15 @@ jobs:
         \  # main takes master's component as is, like this repository's\n  # master; a dev build's stamp goes on a commit\
         \ only its tag names.\n  if [ \"$CHANNEL\" = stable ]; then\n    python3 scripts/stamp_component_version.py \\\n \
         \     --component-dir /tmp/mirror/custom_components/ha_mcp_tools \\\n      --version \"$VER\" --pin \"$PIN\" --dist\
-        \ \"$DIST\"\n  fi\nfi\npython3 scripts/build_mirror_readme.py \\\n  --prefix .github/integration-mirror-readme-prefix.md\
+        \ \"$DIST\" --check\n  fi\nfi\npython3 scripts/build_mirror_readme.py \\\n  --prefix .github/integration-mirror-readme-prefix.md\
         \ \\\n  --readme README.md \\\n  --out /tmp/mirror/README.md\n# Deploy keys can push workflow files (unlike a PAT,\
         \ they aren't\n# subject to the `workflow` scope restriction), and the mirror\n# carries no hand-made changes, so\
         \ its release-on-tag.yml is\n# synced from here too rather than hand-edited in the mirror.\nmkdir -p /tmp/mirror/.github/workflows\n\
-        cp .github/integration-mirror-workflows/release-on-tag.yml \\\n  /tmp/mirror/.github/workflows/release-on-tag.yml\n"
+        if [ \"$CHANNEL\" != none ]; then\n  if [ -f \"$SRC/scripts/build_component_zip.py\" ]; then\n    python3 - <<'PY'\n\
+        import json, os\nfrom pathlib import Path\nPath('/tmp/mirror/.github/component-zip-source.json').write_text(json.dumps({\n\
+        \    'repository': os.environ['SOURCE_REPOSITORY'],\n    'tag': 'v' + os.environ['PIN'],\n}) + '\\n')\nPY\n  else\n\
+        \    rm -f /tmp/mirror/.github/component-zip-source.json\n  fi\nfi\ncp .github/integration-mirror-workflows/release-on-tag.yml\
+        \ \\\n  /tmp/mirror/.github/workflows/release-on-tag.yml\n"
     - name: Commit and push
       env:
         GIT_SSH_COMMAND: ssh -i ~/.ssh/mirror_key -o IdentitiesOnly=yes
@@ -183,6 +190,34 @@ jobs:
       run: "for _ in $(seq 1 60); do\n  if curl -fsS -o /dev/null \"https://julienld.github.io/ha-mcp-mirror-qa-20261107/pypi/${DIST}/${PIN}/json\"\
         ; then\n    echo \"PyPI serves ${DIST} ${PIN}\"\n    exit 0\n  fi\n  sleep 30\ndone\necho \"::error::PyPI never served\
         \ ${DIST} ${PIN}; not tagging a component that pins it.\"\nexit 1\n"
+    - name: Wait for the upstream integration ZIP before tagging
+      if: env.CHANNEL == 'stable' || env.CHANNEL == 'dev'
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GIT_SSH_COMMAND: ssh -i ~/.ssh/mirror_key -o IdentitiesOnly=yes
+        VER: ${{ steps.release.outputs.version }}
+        TAG: ${{ steps.release.outputs.tag }}
+      run: "set -euo pipefail\n# A retry may outlive the upstream asset. The tag step rechecks\n# these refs to cover changes\
+        \ during verification.\nexisting=$(git -C /tmp/mirror ls-remote --tags origin \"refs/tags/${TAG}\")\nif [ -n \"$existing\"\
+        \ ]; then\n  echo \"mirror tag ${TAG} exists - skipping ZIP wait\"\n  echo \"SKIP_MIRROR_TAG=true\" >> \"$GITHUB_ENV\"\
+        \n  exit 0\nfi\nif [ \"$CHANNEL\" = dev ]; then\n  stable_exists=$(git -C /tmp/mirror ls-remote --tags origin \"refs/tags/v${VER}\"\
+        )\n  if [ -n \"$stable_exists\" ]; then\n    echo \"v${VER} is already stable - skipping ZIP wait\"\n    echo \"SKIP_MIRROR_TAG=true\"\
+        \ >> \"$GITHUB_ENV\"\n    exit 0\n  fi\nfi\nMARKER=/tmp/mirror/.github/component-zip-source.json\n[ -f \"$MARKER\"\
+        \ ] || exit 0\nSOURCE_REPOSITORY=$(python3 -c \"import json; print(json.load(open('$MARKER'))['repository'])\")\n\
+        SOURCE_TAG=$(python3 -c \"import json; print(json.load(open('$MARKER'))['tag'])\")\nfor _ in $(seq 1 40); do\n  DIGEST=$(gh\
+        \ api \"repos/${SOURCE_REPOSITORY}/releases/tags/${SOURCE_TAG}\" \\\n    --jq '.assets[] | select(.name == \"ha_mcp_tools.zip\"\
+        \ and .state == \"uploaded\" and .size > 0) | .digest' 2>/dev/null || true)\n  if [[ \"$DIGEST\" =~ ^sha256:[0-9a-f]{64}$\
+        \ ]]; then\n    ZIP_DIR=\"$RUNNER_TEMP/upstream-integration-zip\"\n    mkdir -p \"$ZIP_DIR\"\n    gh release download\
+        \ \"$SOURCE_TAG\" --repo \"$SOURCE_REPOSITORY\" \\\n      --pattern ha_mcp_tools.zip --dir \"$ZIP_DIR\" --clobber\n\
+        \    echo \"${DIGEST#sha256:}  $ZIP_DIR/ha_mcp_tools.zip\" | sha256sum --check -\n    git -C /tmp/mirror diff --exit-code\
+        \ HEAD -- custom_components/ha_mcp_tools\n    VERIFIED_DIGEST=$(python3 scripts/build_component_zip.py \\\n      --component-dir\
+        \ /tmp/mirror/custom_components/ha_mcp_tools \\\n      --verify \"$ZIP_DIR/ha_mcp_tools.zip\")\n    [ \"$VERIFIED_DIGEST\"\
+        \ = \"$DIGEST\" ]\n    python3 - \"$MARKER\" \"$VERIFIED_DIGEST\" <<'PY'\nimport json, pathlib, sys\npath = pathlib.Path(sys.argv[1])\n\
+        metadata = json.loads(path.read_text())\nmetadata['digest'] = sys.argv[2]\npath.write_text(json.dumps(metadata, indent=2)\
+        \ + '\\n')\nPY\n    # Keep main unstamped; only this local release commit is tagged.\n    git -C /tmp/mirror add .github/component-zip-source.json\n\
+        \    if ! git -C /tmp/mirror diff --cached --quiet; then\n      git -C /tmp/mirror commit -m \"Bind integration ZIP\
+        \ to verified snapshot\"\n    fi\n    exit 0\n  fi\n  sleep 15\ndone\necho \"::error::The upstream ZIP is unavailable;\
+        \ not creating a mirror tag.\"\nexit 1\n"
     - name: Tag the mirror
       if: env.CHANNEL == 'stable' || env.CHANNEL == 'dev'
       env:
@@ -190,20 +225,21 @@ jobs:
         VER: ${{ steps.release.outputs.version }}
         TAG: ${{ steps.release.outputs.tag }}
         SOURCE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
-      run: "# Captures instead of `| grep -q .`: without pipefail a FAILED\n# ls-remote looks identical to \"tag absent\"\
-        ; a bare assignment under\n# set -e aborts loud instead. Every release is a new shared version,\n# so an existing\
-        \ tag only means this run already happened.\nexisting=$(git -C /tmp/mirror ls-remote --tags origin \"refs/tags/${TAG}\"\
-        )\nif [ -n \"$existing\" ]; then\n  echo \"mirror tag ${TAG} exists - nothing to do\"\n  exit 0\nfi\nif [ \"$CHANNEL\"\
-        \ = stable ]; then\n  # The tag message is the release body (the deploy key cannot call\n  # the API; the mirror's\
-        \ release-on-tag.yml reads the message).\n  # --cleanup=verbatim keeps the markdown headings `git tag -F`\n  # would\
-        \ otherwise strip as comments.\n  python3 scripts/build_mirror_release_notes.py \\\n    --tag \"$TAG\" --out /tmp/mirror_notes.md\n\
-        else\n  stable_exists=$(git -C /tmp/mirror ls-remote --tags origin \"refs/tags/v${VER}\")\n  if [ -n \"$stable_exists\"\
-        \ ]; then\n    echo \"v${VER} is already released as stable - skipping dev tag\"\n    exit 0\n  fi\n  # One line per\
-        \ pull request merged since the previous dev build.\n  python3 scripts/build_mirror_release_notes.py \\\n    --dev-pin\
-        \ \"${{ steps.release.outputs.pin }}\" \\\n    --dist \"${{ steps.release.outputs.dist }}\" \\\n    --source \"$SOURCE_SHA\"\
-        \ \\\n    --source-label \"${GITHUB_REPOSITORY}@${SOURCE_SHA}\" \\\n    --out /tmp/mirror_notes.md\nfi\necho \"---\
-        \ release notes for ${TAG} ---\"\ncat /tmp/mirror_notes.md\ncd /tmp/mirror\ngit tag -a \"${TAG}\" -F /tmp/mirror_notes.md\
-        \ --cleanup=verbatim\ngit push origin \"${TAG}\"\n"
+      run: "if [ \"${SKIP_MIRROR_TAG:-false}\" = true ]; then\n  echo \"No mirror tag needed at ZIP verification; skipping\
+        \ tag creation.\"\n  exit 0\nfi\n# Captures instead of `| grep -q .`: without pipefail a FAILED\n# ls-remote looks\
+        \ identical to \"tag absent\"; a bare assignment under\n# set -e aborts loud instead. Every release is a new shared\
+        \ version,\n# so an existing tag only means this run already happened.\nexisting=$(git -C /tmp/mirror ls-remote --tags\
+        \ origin \"refs/tags/${TAG}\")\nif [ -n \"$existing\" ]; then\n  echo \"mirror tag ${TAG} exists - nothing to do\"\
+        \n  exit 0\nfi\nif [ \"$CHANNEL\" = stable ]; then\n  # The tag message is the release body (the deploy key cannot\
+        \ call\n  # the API; the mirror's release-on-tag.yml reads the message).\n  # --cleanup=verbatim keeps the markdown\
+        \ headings `git tag -F`\n  # would otherwise strip as comments.\n  python3 scripts/build_mirror_release_notes.py \\\
+        \n    --tag \"$TAG\" --out /tmp/mirror_notes.md\nelse\n  stable_exists=$(git -C /tmp/mirror ls-remote --tags origin\
+        \ \"refs/tags/v${VER}\")\n  if [ -n \"$stable_exists\" ]; then\n    echo \"v${VER} is already released as stable -\
+        \ skipping dev tag\"\n    exit 0\n  fi\n  # One line per pull request merged since the previous dev build.\n  python3\
+        \ scripts/build_mirror_release_notes.py \\\n    --dev-pin \"${{ steps.release.outputs.pin }}\" \\\n    --dist \"${{\
+        \ steps.release.outputs.dist }}\" \\\n    --source \"$SOURCE_SHA\" \\\n    --source-label \"${GITHUB_REPOSITORY}@${SOURCE_SHA}\"\
+        \ \\\n    --out /tmp/mirror_notes.md\nfi\necho \"--- release notes for ${TAG} ---\"\ncat /tmp/mirror_notes.md\ncd\
+        \ /tmp/mirror\ngit tag -a \"${TAG}\" -F /tmp/mirror_notes.md --cleanup=verbatim\ngit push origin \"${TAG}\"\n"
     outputs:
       qa_tag: ${{ steps.release.outputs.tag }}
       qa_pin: ${{ steps.release.outputs.pin }}
@@ -218,6 +254,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      statuses: write
+      pull-requests: write
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
@@ -230,6 +268,11 @@ jobs:
       env:
         QA_NEEDS: ${{ toJSON(needs) }}
         QA_STAGE: ${{ vars.QA_STAGE }}
+        GH_TOKEN: ${{ github.token }}
+        QA_REPORT_FAILURES: 'true'
+        QA_OBSERVER_PR: ${{ vars.QA_OBSERVER_PR }}
+        QA_OBSERVER_SHA: ${{ vars.QA_OBSERVER_SHA }}
+        QA_FAIL_DOCKER: ${{ vars.QA_FAIL_DOCKER }}
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: qa-workflow-receipt

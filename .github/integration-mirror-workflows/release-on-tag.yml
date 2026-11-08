@@ -23,18 +23,52 @@ jobs:
         if [ \"$(git cat-file -t \"refs/tags/$GITHUB_REF_NAME\")\" = \"tag\" ]; then\n  git tag -l --format='%(contents)'\
         \ \"$GITHUB_REF_NAME\" > /tmp/notes.md\nelse\n  : > /tmp/notes.md\nfi\nif ! grep -q '[^[:space:]]' /tmp/notes.md;\
         \ then\n  echo \"Component snapshot synced from homeassistant-ai/ha-mcp.\" > /tmp/notes.md\nfi\n"
+    - name: Copy the upstream integration ZIP
+      if: hashFiles('.github/component-zip-source.json') != ''
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: "set -euo pipefail\nEXPECTED_DIGEST=$(python3 -c \"import json; print(json.load(open('.github/component-zip-source.json'))['digest'])\"\
+        )\n[[ \"$EXPECTED_DIGEST\" =~ ^sha256:[0-9a-f]{64}$ ]] || exit 1\n# gh's lookup includes drafts left by interrupted\
+        \ uploads; the REST\n# tag endpoint only guarantees published releases.\nMIRROR_DIGEST=\"\"\nif MIRROR_RELEASE_ID=$(gh\
+        \ release view \"$GITHUB_REF_NAME\" --repo \"$GITHUB_REPOSITORY\" \\\n  --json databaseId --jq .databaseId 2>/dev/null);\
+        \ then\n  MIRROR_DIGEST=$(gh api \"repos/${GITHUB_REPOSITORY}/releases/${MIRROR_RELEASE_ID}\" \\\n    --jq '.assets[]\
+        \ | select(.name == \"ha_mcp_tools.zip\" and .state == \"uploaded\" and .size > 0) | .digest')\nfi\nif [[ \"$MIRROR_DIGEST\"\
+        \ =~ ^sha256:[0-9a-f]{64}$ ]]; then\n  if [ \"$MIRROR_DIGEST\" != \"$EXPECTED_DIGEST\" ]; then\n    echo \"::error::The\
+        \ counted mirror asset differs from the tagged ZIP digest.\"\n    exit 1\n  fi\n  echo \"The mirror already has the\
+        \ uploaded ZIP; preserving its download history.\"\n  exit 0\nfi\nSOURCE_REPOSITORY=$(python3 -c \"import json; print(json.load(open('.github/component-zip-source.json'))['repository'])\"\
+        )\nSOURCE_TAG=$(python3 -c \"import json; print(json.load(open('.github/component-zip-source.json'))['tag'])\")\n\
+        mkdir -p dist/integration\n# The stable publisher may still be finalizing its draft after PyPI\n# becomes available.\
+        \ Copy the published asset; never rebuild it here.\nfor attempt in $(seq 1 40); do\n  DIGEST=$(gh api \"repos/${SOURCE_REPOSITORY}/releases/tags/${SOURCE_TAG}\"\
+        \ \\\n    --jq '.assets[] | select(.name == \"ha_mcp_tools.zip\") | .digest' 2>/dev/null || true)\n  if [[ \"$DIGEST\"\
+        \ =~ ^sha256:[0-9a-f]{64}$ ]]; then\n    if [ \"$DIGEST\" != \"$EXPECTED_DIGEST\" ]; then\n      echo \"::error::The\
+        \ upstream ZIP changed after snapshot verification.\"\n      exit 1\n    fi\n    gh release download \"$SOURCE_TAG\"\
+        \ --repo \"$SOURCE_REPOSITORY\" \\\n      --pattern ha_mcp_tools.zip --dir dist/integration --clobber\n    echo \"\
+        ${EXPECTED_DIGEST#sha256:}  dist/integration/ha_mcp_tools.zip\" | sha256sum --check -\n    exit 0\n  fi\n  sleep 15\n\
+        done\necho \"::error::The upstream integration ZIP was not published with a digest.\"\nexit 1\n"
     - name: Create release for tag
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: "VER=\"${GITHUB_REF_NAME#v}\"\n# Check existence explicitly instead of `|| echo \"release exists\"`:\n# that pattern\
-        \ treated EVERY create failure (auth, rate limit, bad\n# notes file) as already-exists and reported green with no\
-        \ release\n# published (review finding). Now only a genuine duplicate no-ops;\n# a real create failure fails the job\
-        \ visibly.\nif gh release view \"$GITHUB_REF_NAME\" --repo \"$GITHUB_REPOSITORY\" >/dev/null 2>&1; then\n  echo \"\
-        release exists\"\n  exit 0\nfi\n# -dev. tags are the dev channel: the prerelease flag is what keeps\n# them away from\
-        \ stable HACS users (HACS filters on it unless the\n# repository's \"Pre-release\" switch entity is on) and out of\n\
-        # GitHub's \"latest\" release.\nPRERELEASE_FLAG=\"\"\ncase \"$GITHUB_REF_NAME\" in\n  *-dev.*) PRERELEASE_FLAG=\"\
-        --prerelease\" ;;\nesac\ngh release create \"$GITHUB_REF_NAME\" --repo \"$GITHUB_REPOSITORY\" \\\n  --title \"$VER\"\
-        \ -F /tmp/notes.md $PRERELEASE_FLAG\n"
+      run: "set -euo pipefail\nVER=\"${GITHUB_REF_NAME#v}\"\n# Check existence explicitly instead of `|| echo \"release exists\"\
+        `:\n# that pattern treated EVERY create failure (auth, rate limit, bad\n# notes file) as already-exists and reported\
+        \ green with no release\n# published (review finding). Now only a genuine duplicate no-ops;\n# a real create failure\
+        \ fails the job visibly.\nif MIRROR_RELEASE_ID=$(gh release view \"$GITHUB_REF_NAME\" --repo \"$GITHUB_REPOSITORY\"\
+        \ \\\n  --json databaseId --jq .databaseId 2>/dev/null); then\n  # Backfill a missing asset on recovery without replacing\
+        \ one that\n  # already has a download history.\n  DIGEST=$(gh api \"repos/${GITHUB_REPOSITORY}/releases/${MIRROR_RELEASE_ID}\"\
+        \ \\\n    --jq '.assets[] | select(.name == \"ha_mcp_tools.zip\" and .state == \"uploaded\" and .size > 0) | .digest')\n\
+        \  if [ -f .github/component-zip-source.json ] && [[ \"$DIGEST\" =~ ^sha256:[0-9a-f]{64}$ ]]; then\n    EXPECTED_DIGEST=$(python3\
+        \ -c \"import json; print(json.load(open('.github/component-zip-source.json'))['digest'])\")\n    [ \"$DIGEST\" =\
+        \ \"$EXPECTED_DIGEST\" ] || { echo \"::error::The mirror asset differs from the tagged ZIP digest.\"; exit 1; }\n\
+        \  fi\n  if [ -f dist/integration/ha_mcp_tools.zip ] && ! [[ \"$DIGEST\" =~ ^sha256:[0-9a-f]{64}$ ]]; then\n    #\
+        \ Replace only an incomplete upload, never a usable counted asset.\n    gh release upload \"$GITHUB_REF_NAME\" dist/integration/ha_mcp_tools.zip\
+        \ --repo \"$GITHUB_REPOSITORY\" --clobber\n  fi\n  if [ \"$(gh release view \"$GITHUB_REF_NAME\" --repo \"$GITHUB_REPOSITORY\"\
+        \ --json isDraft --jq .isDraft)\" = true ]; then\n    gh release edit \"$GITHUB_REF_NAME\" --repo \"$GITHUB_REPOSITORY\"\
+        \ --draft=false\n  fi\n  echo \"release exists\"\n  exit 0\nfi\n# -dev. tags are the dev channel: the prerelease flag\
+        \ is what keeps\n# them away from stable HACS users (HACS filters on it unless the\n# repository's \"Pre-release\"\
+        \ switch entity is on) and out of\n# GitHub's \"latest\" release.\nPRERELEASE_FLAG=\"\"\ncase \"$GITHUB_REF_NAME\"\
+        \ in\n  *-dev.*) PRERELEASE_FLAG=\"--prerelease\" ;;\nesac\nASSETS=()\nif [ -f dist/integration/ha_mcp_tools.zip ];\
+        \ then\n  ASSETS+=(dist/integration/ha_mcp_tools.zip)\nfi\n# With an asset, gh stages the upload before publishing\
+        \ and attempts\n# cleanup on failure; explicit --draft would disable that cleanup.\ngh release create \"$GITHUB_REF_NAME\"\
+        \ \"${ASSETS[@]}\" --repo \"$GITHUB_REPOSITORY\" \\\n  --title \"$VER\" -F /tmp/notes.md $PRERELEASE_FLAG\n"
     - name: Retire superseded dev pre-releases
       if: ${{ !contains(github.ref_name, '-dev.') }}
       env:
