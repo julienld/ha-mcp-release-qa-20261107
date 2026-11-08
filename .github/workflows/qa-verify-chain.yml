@@ -23,6 +23,7 @@ jobs:
       QA_STAGE: ${{ vars.QA_STAGE }}
       QA_OBSERVER_PR: ${{ vars.QA_OBSERVER_PR }}
       QA_OBSERVER_SHA: ${{ vars.QA_OBSERVER_SHA }}
+      QA_FAIL_DOCKER: ${{ vars.QA_FAIL_DOCKER }}
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
