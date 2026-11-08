@@ -1,0 +1,53 @@
+name: QA Retire Container Packages
+on:
+  workflow_dispatch:
+    inputs:
+      delete:
+        type: boolean
+        default: false
+permissions:
+  contents: read
+  packages: write
+  statuses: write
+  issues: write
+jobs:
+  retire:
+    if: ${{ github.repository == 'julienld/ha-mcp-release-qa-20261107' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
+      with:
+        version: 0.13.4
+    - name: Inspect or retire exact QA container packages
+      run: 'ARGS=(); if [ "$DELETE" = true ]; then ARGS=(--delete); fi
+
+        uv run -s .qa/retire.py "${ARGS[@]}"'
+      env:
+        GH_TOKEN: ${{ github.token }}
+        DELETE: ${{ inputs.delete }}
+        QA_ARMED: ${{ vars.QA_ARMED }}
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      if: ${{ always() }}
+      with:
+        name: qa-container-retirement
+        path: qa-container-retirement.json
+        retention-days: 30
+    - name: Report terminal retirement result
+      if: ${{ always() }}
+      run: 'STATE="$RESULT"; if [ "$STATE" != success ]; then STATE=failure; fi
+
+        gh api "repos/$GITHUB_REPOSITORY/statuses/$OBSERVER_SHA" -f state="$STATE" -f context="Rehearsal / retirement" -f
+        target_url="$RUN_URL" -f description="QA container retirement: $STATE"
+
+        gh api "repos/$GITHUB_REPOSITORY/issues/$OBSERVER_PR/comments" -f body="[Agent] QA container retirement: **$STATE**.
+        [Run and receipt]($RUN_URL)."'
+      env:
+        GH_TOKEN: ${{ github.token }}
+        RESULT: ${{ job.status }}
+        OBSERVER_SHA: ${{ vars.QA_OBSERVER_SHA }}
+        OBSERVER_PR: ${{ vars.QA_OBSERVER_PR }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
