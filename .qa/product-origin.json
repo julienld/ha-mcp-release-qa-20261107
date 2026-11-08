@@ -1,24 +1,24 @@
 {
   "source_repository": "julienld/ha-mcp-release-qa-20261107",
   "mirror_repository": "julienld/ha-mcp-mirror-qa-20261107",
-  "phase": "base",
-  "product_sha": "e18a242ac180e11d8df3847009db2e60221b6527",
+  "phase": "assets",
+  "product_sha": "1a153e83d72496b8851ad22485bafe01d4beeda7",
   "workflows": {
     "semver-release.yml": {
-      "production_sha256": "0a8f075e5eb8b82be13c40c0f30b0131df299764e7ac8b2b9e6b9185fd402e18",
-      "qa_sha256": "4b28eebbc19cb1a20b8f70e277092901c455e5146d76cf76e5148da9d1a8a832"
+      "production_sha256": "1968975ca4615dffd9075fc44881485e7d2dbe63b4c934cb7d34746f9df34946",
+      "qa_sha256": "650bdd201e9f40743afa56a472e7477e3150e538be5302b58ce914072f81eafd"
     },
     "release-publish.yml": {
       "production_sha256": "d1bc66366bbd14fe1730b5e26ef99bf42923facdf22b6f465a26247031436f1c",
       "qa_sha256": "2b4c48d43c2c8371c3c4da313fd33ff3256a7ca0602e3130ac929dfb2c2627ce"
     },
     "publish-dev.yml": {
-      "production_sha256": "2abc358b3ad261dcef1de97e9435588edfc0a2bf1d041a105ec9c95563e87788",
-      "qa_sha256": "14c59ac6f53a7811a90d111e1f5135ec0cccd34e873543fdd16b273bde60a5b6"
+      "production_sha256": "4730750b2cacb96a531fad0c0117ade36e9847745eff6ae467ff177415b599dc",
+      "qa_sha256": "b6022f3d40ac2b4501a6189ab57a0d1d294c11284a666e4d71e8352547942497"
     },
     "sync-integration-mirror.yml": {
-      "production_sha256": "45bbcbb143c323cfae7e1a2ca4fddd8621b7e2797ef9cfa0507a6193d506ac8b",
-      "qa_sha256": "4b26cde84f321beab1814576dc4dd2136bc87f748a7b6459aa80cae9acc1173f"
+      "production_sha256": "0045b18c34d3d0cb19dcd4de9a6587f3326ac419f47024d9b3253fbf25abece5",
+      "qa_sha256": "0c683a26e068f5fdd5e4bcc6b6e12ddd0e821f11e3fb1497cfaa2c6aece70279"
     },
     "deploy.yml": {
       "production_sha256": "7f01d29e7b5934c0a3fb8c0b61c8a0c986516e2be4aab1327e8a8a10b6e2abc3",

@@ -462,7 +462,7 @@ def report() -> None:
         f"statuses/{sha}",
         fields={
             "state": "success" if successful else "failure",
-            "context": f"Rehearsal / {stage} / {channel}",
+            "context": f"Rehearsal / {stage}",
             "description": "Real workflow-chain verification",
             "target_url": url,
         },

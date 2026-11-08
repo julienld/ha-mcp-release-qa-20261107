@@ -110,6 +110,14 @@ jobs:
         verbosity: '2'
         force: ${{ inputs.force && 'patch' || '' }}
         vcs_release: 'false'
+    - name: Install uv for the integration artifact
+      if: steps.semantic.outputs.released == 'true'
+      uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
+      with:
+        version: 0.13.4
+    - name: Build the stamped integration ZIP
+      if: steps.semantic.outputs.released == 'true'
+      run: uv run -s scripts/build_component_zip.py --output dist/integration/ha_mcp_tools.zip
     - name: Create draft GitHub release
       if: steps.semantic.outputs.released == 'true'
       env:
@@ -120,9 +128,9 @@ jobs:
         \  # An empty extract means either no \"## v${VERSION}\" heading or an\n  # empty section, and the file cannot tell\
         \ those apart \u2014 so warn\n  # instead of letting a one-line release body pass for a normal run.\n  echo \"::warning::no\
         \ changelog section extracted for v${VERSION} \u2014 releasing with fallback notes\"\n  echo \"Release v${VERSION}\"\
-        \ > release_notes.md\nfi\n\n# A draft until the last step of this job publishes it.\ngh release create \"$TAG\" \\\
-        \n  --title \"$TAG\" \\\n  --notes-file release_notes.md \\\n  --draft\n\necho \"\u2713 Created draft release $TAG\"\
-        \n"
+        \ > release_notes.md\nfi\n\n# A draft until the last step of this job publishes it.\ngh release create \"$TAG\" dist/integration/ha_mcp_tools.zip\
+        \ \\\n  --title \"$TAG\" \\\n  --notes-file release_notes.md \\\n  --draft\n\necho \"\u2713 Created draft release\
+        \ $TAG\"\n"
     - name: Copy changelog to addon directory
       if: steps.semantic.outputs.released == 'true'
       run: "set -e\ncp CHANGELOG.md homeassistant-addon/CHANGELOG.md\ngit config user.name \"github-actions[bot]\"\ngit config\
