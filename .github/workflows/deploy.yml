@@ -41,8 +41,28 @@ jobs:
         version: 0.13.4
     - name: Generate star history charts
       env:
-        GITHUB_TOKEN: ${{ github.token }}
-      run: python3 ../scripts/generate_star_history.py --repository "${{ github.repository }}" --output-dir public/star-history
+        GH_TOKEN: ${{ github.token }}
+      run: 'python3 - <<''PY''
+
+        import json, os, subprocess, sys
+
+        from pathlib import Path
+
+        sys.path.insert(0, ''../scripts'')
+
+        import generate_star_history as charts
+
+        repo = os.environ[''GITHUB_REPOSITORY'']
+
+        metadata = json.loads(subprocess.check_output([''gh'', ''api'', ''repos/'' + repo], text=True))
+
+        assert metadata[''stargazers_count''] == 0, ''The isolated QA repository must still have zero stars''
+
+        charts.write_charts(charts.aggregate_daily(repo, []), Path(''public/star-history''))
+
+        PY
+
+        '
     - name: Setup Node
       uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
       with:
