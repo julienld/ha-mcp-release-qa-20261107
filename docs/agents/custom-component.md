@@ -30,11 +30,66 @@ mirror asset matching the tag's digest is reused even if its upstream dev releas
 uploads are replaced before a recovered draft is published. The upstream
 source lookup still requires a published release.
 
-This first rollout does not enable `zip_release`: HACS/Marketplace continue
-their existing archive installation. Activation is a separate change, after
-assets exist and the stable publisher guarantees the pinned PyPI build is
-available before exposing the GitHub release. The present stable sequencing
-is not changed by artifact publication alone.
+HACS/Marketplace select the asset through `zip_release` and `filename` in
+`hacs.json`. Enable these only after **every selectable stable, dev and mirror
+release, including older versions**, has the ZIP. HACS may reuse the latest
+manifest for an older version selected at first install; checking only the
+latest release is insufficient. Keep the activation PR draft until this is
+verified against both stable and pre-release version choices. Backfill missing
+assets from each exact release checkout, preserving its manifest/pin; copy the
+same bytes to its mirror release. Never replace a usable counted asset.
+
+Stable SemVer creates a draft with the stamped ZIP; Release
+Publish publishes PyPI, verifies an available pure Python wheel for the Python
+versions declared by the released project's metadata, and checks the ZIP,
+then publishes the draft and advances `stable`. Release Publish supplies
+`hacs.json` and `pyproject.toml` from its tag checkout. The finalizer independently
+compares the tracked component directory with that tag, then downloads the
+asset by ID and checks its digest and members. These checks precede both GitHub
+writes. Legacy archive
+releases that do not select a ZIP keep their recovery path.
+Do not wait for PyPI inside SemVer: the PyPI workflow starts only after SemVer
+completes. The site deploy
+and the mirror consume the finalized-tag artifact from Release Publish, even
+if a later Docker or MCP Registry job fails. They ignore a superseded marker.
+Find drafts through the authenticated, paginated release list: GitHub's
+release-by-tag endpoint only guarantees published releases. Keep the lookup
+unbounded by a fixed release count so older recovery targets remain reachable.
+
+Release Publish takes the exact tag artifact from the triggering SemVer run;
+gated runs provide none. Moving master cannot change its selection. Runs are
+serialized across finalization and container publishing. The alias push uses
+the exact previously observed tag-object SHA as its force-with-lease condition;
+a concurrent operator change is never overwritten. Tag ancestry compares
+immutable peeled commit SHAs while the alias preserves the annotated tag object.
+An old retry cannot move the alias backwards, and a partial Docker rerun checks
+that its release is still current before promotion. Independent manual release
+publication must not race this workflow; historical workflow revisions do not
+inherit new concurrency controls. Recover through the current publisher.
+
+A manual stable mirror recovery supplies `release_publish_run_id` from a
+finalized Release Publish run on master. Before reading its finalized-tag artifact,
+validation checks the run's workflow ID against `release-publish.yml`, its master
+branch and a publisher event (`workflow_run` or `workflow_dispatch`). PR runs and
+failed metadata lookups are refused; a later Docker/MCP failure does not invalidate
+successful finalization. Recovery uses the same artifact and current-alias checks
+as the automatic path, never the latest public release. A public release left by
+a failed alias lease is not sufficient: retry the current publisher first.
+The resolved tag must still match the raw stable alias both before staging
+the snapshot and again at the final mirror-tag step.
+
+Prerequisite failures perform no GitHub writes. An unconfirmed publication
+response stops before the alias write; inspect the release and retry to
+reconcile its state. If publication succeeds but the alias lease fails, the
+verified, installable release stays public, this run leaves the alias alone,
+and Docker publishing is skipped.
+Inspect the operator's change before retrying the current publisher. Returning
+the release to draft cannot undo downloads or publication events and is not a
+transactional rollback. A public release with the correct alias is a no-op, and
+existing assets are not replaced. The finalizer reads the
+tag's manifests, so pre-ZIP tags keep their legacy archive behavior on recovery.
+The wheel check does not resolve or qualify all transitive Core dependencies;
+their existing compatibility and no-stomp checks remain authoritative.
 
 The container E2E fixture installs this artifact before HA boots, so existing
 component scenarios exercise the ZIP. The existing update-path scenarios retain
@@ -44,6 +99,35 @@ entry preservation, the selected server version and a real MCP read. It does
 not claim an old-version component migration or a Marketplace UI click test.
 For a focused GitHub runner execution, dispatch `e2e-tests.yml` on a test fork
 with `update_path_only=true`.
+
+### Recover a stable tag pushed before its draft was created
+
+If uv setup or ZIP creation fails after SemVer pushes its tag, a fresh SemVer
+dispatch may report no new release. Recover the same tag instead of cutting a
+new version. Pause other release cuts during recovery, confirm that the tag is
+the current stable-release candidate and that its GitHub release is absent.
+From the current publisher checkout, use the original tag's component and notes:
+
+```bash
+set -euo pipefail
+TAG=vX.Y.Z
+REPO=homeassistant-ai/ha-mcp
+git fetch origin master --tags
+test "$(git describe origin/master --tags --abbrev=0 --match 'v[0-9]*' --exclude '*dev*')" = "$TAG"
+git worktree add --detach worktree/release-recovery "$TAG"
+uv run -s scripts/build_component_zip.py --component-dir worktree/release-recovery/custom_components/ha_mcp_tools --output local/release-recovery/ha_mcp_tools.zip
+uv run -s scripts/extract_release_notes.py --version "$TAG" --changelog worktree/release-recovery/CHANGELOG.md --out local/release-recovery/notes.md
+test -s local/release-recovery/notes.md
+gh release create "$TAG" local/release-recovery/ha_mcp_tools.zip --repo "$REPO" --verify-tag --draft --title "$TAG" --notes-file local/release-recovery/notes.md
+gh workflow run release-publish.yml --repo "$REPO" --ref master
+```
+
+The current Release Publish workflow selects that existing tag, publishes its
+PyPI package with `skip-existing`, then verifies and finalizes the recovered
+draft. If the draft already exists, inspect it and upload only a missing ZIP;
+do not recreate it or overwrite a usable counted asset. Confirm finalization
+and its finalized-tag artifact before recovering the mirror. This is a manual
+recovery path, not a claim that rerunning SemVer repairs a stranded tag.
 
 ## Version cycle
 

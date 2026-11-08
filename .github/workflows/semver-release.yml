@@ -128,9 +128,21 @@ jobs:
         \  # An empty extract means either no \"## v${VERSION}\" heading or an\n  # empty section, and the file cannot tell\
         \ those apart \u2014 so warn\n  # instead of letting a one-line release body pass for a normal run.\n  echo \"::warning::no\
         \ changelog section extracted for v${VERSION} \u2014 releasing with fallback notes\"\n  echo \"Release v${VERSION}\"\
-        \ > release_notes.md\nfi\n\n# A draft until the last step of this job publishes it.\ngh release create \"$TAG\" dist/integration/ha_mcp_tools.zip\
-        \ \\\n  --title \"$TAG\" \\\n  --notes-file release_notes.md \\\n  --draft\n\necho \"\u2713 Created draft release\
-        \ $TAG\"\n"
+        \ > release_notes.md\nfi\n\n# Release Publish finalizes this draft only after PyPI is ready.\ngh release create \"\
+        $TAG\" dist/integration/ha_mcp_tools.zip \\\n  --title \"$TAG\" \\\n  --notes-file release_notes.md \\\n  --draft\n\
+        \necho \"\u2713 Created draft release $TAG\"\n"
+    - name: Record this run's release tag
+      if: steps.semantic.outputs.released == 'true'
+      env:
+        VERSION: ${{ steps.semantic.outputs.version }}
+      run: printf 'v%s\n' "$VERSION" > release-tag.txt
+    - name: Pass the exact release tag to Release Publish
+      if: steps.semantic.outputs.released == 'true'
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: stable-release-tag
+        path: release-tag.txt
+        if-no-files-found: error
     - name: Copy changelog to addon directory
       if: steps.semantic.outputs.released == 'true'
       run: "set -e\ncp CHANGELOG.md homeassistant-addon/CHANGELOG.md\ngit config user.name \"github-actions[bot]\"\ngit config\
@@ -143,24 +155,6 @@ jobs:
         \  git pull --rebase origin master || {\n    git rebase --abort 2>/dev/null || true\n    echo \"::error::Rebase onto\
         \ origin/master failed; aborting retries.\"\n    exit 1\n  }\ndone\necho \"::error::Could not push addon changelog\
         \ sync after 5 attempts.\"\nexit 1\n"
-    - name: Update stable git tag
-      if: steps.semantic.outputs.released == 'true'
-      run: "# Move the 'stable' tag to point to the new release\nVERSION=\"${{ steps.semantic.outputs.version }}\"\necho \"\
-        Updating 'stable' tag to point to v$VERSION\"\n\n# Delete existing stable tag (local and remote)\ngit tag -d stable\
-        \ 2>/dev/null || true\ngit push origin :refs/tags/stable 2>/dev/null || true\n\n# Create new stable tag pointing to\
-        \ the release commit\ngit tag stable \"v$VERSION\"\ngit push origin stable\n\necho \"\u2713 'stable' tag now points\
-        \ to v$VERSION\"\n"
-    - name: Publish GitHub release
-      if: steps.semantic.outputs.released == 'true'
-      env:
-        GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
-      run: '# Last, so a failed changelog push or stable-tag update leaves a draft
-
-        # instead of a public release with no PyPI or Docker publish behind it.
-
-        gh release edit "v${{ steps.semantic.outputs.version }}" --draft=false
-
-        '
   build-addon:
     needs: semantic-release
     if: needs.semantic-release.outputs.released == 'true'

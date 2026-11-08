@@ -2,7 +2,7 @@ name: Deploy to GitHub Pages
 on:
   workflow_run:
     workflows:
-    - SemVer Release
+    - Release Publish
     types:
     - completed
   push:
@@ -22,9 +22,32 @@ concurrency:
   group: pages
   cancel-in-progress: false
 jobs:
+  finalized:
+    permissions:
+      contents: read
+      actions: read
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+    steps:
+    - if: github.event_name != 'workflow_run'
+      run: ':'
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      if: github.event_name == 'workflow_run'
+      with:
+        persist-credentials: false
+        sparse-checkout: .github/actions/read-finalized-release
+    - id: release
+      if: github.event_name == 'workflow_run'
+      uses: ./.github/actions/read-finalized-release
+      env:
+        GH_TOKEN: ${{ github.token }}
+      with:
+        run-id: ${{ github.event.workflow_run.id }}
+    if: ${{ vars.QA_ARMED == 'true' && github.sha != vars.QA_BOOTSTRAP_SHA && (true) }}
   build:
-    if: ${{ vars.QA_ARMED == 'true' && github.sha != vars.QA_BOOTSTRAP_SHA && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion
-      == 'success') }}
+    needs: finalized
+    if: ${{ github.event_name != 'workflow_run' || needs.finalized.outputs.tag != '' }}
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -35,7 +58,7 @@ jobs:
     - name: Checkout
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
-        ref: ${{ inputs.ref || 'stable' }}
+        ref: ${{ inputs.ref || needs.finalized.outputs.tag || 'stable' }}
     - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
       with:
         version: 0.13.4
@@ -76,6 +99,7 @@ jobs:
   qa_receipt:
     name: QA workflow receipt
     needs:
+    - finalized
     - build
     - deploy
     if: ${{ always() && vars.QA_ARMED == 'true' }}

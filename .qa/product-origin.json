@@ -1,28 +1,28 @@
 {
   "source_repository": "julienld/ha-mcp-release-qa-20261107",
   "mirror_repository": "julienld/ha-mcp-mirror-qa-20261107",
-  "phase": "assets",
-  "product_sha": "1a153e83d72496b8851ad22485bafe01d4beeda7",
+  "phase": "activation",
+  "product_sha": "94663b965ee9be21fefb31ed4f297064377050ed",
   "workflows": {
     "semver-release.yml": {
-      "production_sha256": "1968975ca4615dffd9075fc44881485e7d2dbe63b4c934cb7d34746f9df34946",
-      "qa_sha256": "1c3754165715c4d06b2ce825389df98c5db2a1ca57cab9e946c7d48cf2b87d52"
+      "production_sha256": "21946508fe494ec169725587dd7b8ae2b9ac9cdcf5e09e89c3e8daff14ae1614",
+      "qa_sha256": "fba95f97f9e5e94535bd727580d9193d7544a87fd1701fb601205b14d03592a9"
     },
     "release-publish.yml": {
-      "production_sha256": "d1bc66366bbd14fe1730b5e26ef99bf42923facdf22b6f465a26247031436f1c",
-      "qa_sha256": "1b5c869bcfcdfdab0754932f9c2f5c10eb1f9140ce4079e0e0a5af83cd1cbe67"
+      "production_sha256": "cb1ec8a90b2d02faf378afd79424c748da1a611e1c1169453c4f2d39f740433e",
+      "qa_sha256": "7e9b2c7b127e9894d35be7f6d0622d44fb01771f84a2b91494b3250aa3ba8bcb"
     },
     "publish-dev.yml": {
       "production_sha256": "4730750b2cacb96a531fad0c0117ade36e9847745eff6ae467ff177415b599dc",
       "qa_sha256": "7941998c34349182510d0885d0c547356bb52e16be3e875f4ec479ce7201aac9"
     },
     "sync-integration-mirror.yml": {
-      "production_sha256": "0045b18c34d3d0cb19dcd4de9a6587f3326ac419f47024d9b3253fbf25abece5",
-      "qa_sha256": "e88379db60326d6f83df682c571747a6c1983f0ecc4a6d9582a9e4df8d6c182f"
+      "production_sha256": "4c3fe9e1c8a141cff84abe67e4048736f6f7d03c7f4f1e8ca466c254d30be38b",
+      "qa_sha256": "e6eed769c200830bc6b875211271ec652fc9081cde5aa0cd70781661525e82dd"
     },
     "deploy.yml": {
-      "production_sha256": "7f01d29e7b5934c0a3fb8c0b61c8a0c986516e2be4aab1327e8a8a10b6e2abc3",
-      "qa_sha256": "7e3609426b8be96a20dd666cc55e5ccf2fb488ec671e228b01869e570c73709d"
+      "production_sha256": "a33a52b5d16b9e023a455bfa65d3e00ad708a8cf8788717a069ad163eee33cb2",
+      "qa_sha256": "f781233b0b45ab980e6c2b586620959481de470db7de34681cd97f6f39c252bd"
     },
     "addon-publish.yml": {
       "production_sha256": "9d75d9b8068cfbfb9a5428979db7dd7322da5c5329a822745ef9f5b872c8746c",
