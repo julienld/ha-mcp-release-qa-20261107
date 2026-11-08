@@ -331,6 +331,37 @@ def receipt() -> None:
         )
 
 
+def pre_finalization(tag: str) -> None:
+    context()
+    if not re.fullmatch(r"v\d+\.\d+\.\d+", tag):
+        raise ValueError("Unexpected stable QA tag")
+    release = json.loads(
+        run(
+            [
+                "gh",
+                "release",
+                "view",
+                tag,
+                "--repo",
+                SOURCE,
+                "--json",
+                "isDraft,databaseId,tagName",
+            ]
+        ).stdout
+    )
+    stable = api(SOURCE, "git/ref/tags/stable")["object"]["sha"]
+    target = api(SOURCE, "git/ref/tags/" + tag)["object"]["sha"]
+    if "recovery" not in os.environ.get("QA_STAGE", ""):
+        assert release["isDraft"] is True, (
+            "Release was published ahead of its finalizer"
+        )
+        assert stable != target, "Stable moved ahead of finalization"
+    write(
+        Path("qa-prefinalization.json"),
+        {"tag": tag, "release": release, "stable_before": stable, "target": target},
+    )
+
+
 def site_marker() -> None:
     context()
     project = tomllib.loads(Path("../pyproject.toml").read_text())["project"]
@@ -542,14 +573,24 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "command",
-        choices=("publish-index", "receipt", "site-marker", "verify-chain", "report"),
+        choices=(
+            "publish-index",
+            "receipt",
+            "site-marker",
+            "verify-chain",
+            "report",
+            "pre-finalization",
+        ),
     )
     parser.add_argument("--dist", type=Path, default=Path("dist"))
+    parser.add_argument("--tag")
     parser.add_argument(
         "--parent", type=Path, default=Path("parent/qa-workflow-receipt.json")
     )
     args = parser.parse_args()
-    if args.command == "publish-index":
+    if args.command == "pre-finalization":
+        pre_finalization(args.tag)
+    elif args.command == "publish-index":
         publish_index(args.dist)
     elif args.command == "receipt":
         receipt()

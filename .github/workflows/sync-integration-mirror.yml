@@ -14,7 +14,7 @@ on:
     - .github/integration-mirror-workflows/**
   workflow_run:
     workflows:
-    - SemVer Release
+    - Release Publish
     - Publish Dev Channel
     types:
     - completed
@@ -23,13 +23,18 @@ on:
   workflow_dispatch:
     inputs:
       channel:
-        description: stable re-tags the latest stable release (recovery path when a release run flaked); dev cuts a v<next>-dev.N
-          pre-release from the current master snapshot, pinned to its already-published dev build. Dispatch from master only.
+        description: stable re-tags a finalized Release Publish run (provide its run ID); dev cuts a v<next>-dev.N pre-release
+          from the current master snapshot, pinned to its already-published dev build. Dispatch from master only.
         type: choice
         options:
         - stable
         - dev
         default: stable
+      release_publish_run_id:
+        description: 'For stable recovery: Release Publish run with the current finalized-tag artifact'
+        type: string
+        required: false
+        default: ''
 permissions:
   contents: read
 concurrency:
@@ -40,11 +45,41 @@ jobs:
   gate:
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       actions: read
     outputs:
       channel: ${{ steps.decide.outputs.channel }}
       dev_run: ${{ steps.decide.outputs.dev_run }}
+      finalized_tag: ${{ steps.decide.outputs.finalized_tag }}
     steps:
+    - name: Validate stable recovery input
+      if: github.event_name == 'workflow_dispatch' && inputs.channel == 'stable'
+      env:
+        GH_TOKEN: ${{ github.token }}
+        RECOVERY_RUN_ID: ${{ inputs.release_publish_run_id }}
+        RECOVERY_BRANCH: ${{ github.ref_name }}
+      run: "set -euo pipefail\nif [ \"$RECOVERY_BRANCH\" != master ] || ! [[ \"$RECOVERY_RUN_ID\" =~ ^[1-9][0-9]*$ ]]; then\n\
+        \  echo \"::error::Stable recovery requires master and a finalized Release Publish run ID. Retry the current publisher\
+        \ first if finalization failed.\"\n  exit 1\nfi\nPUBLISHER_ID=$(gh api \"repos/$GITHUB_REPOSITORY/actions/workflows/release-publish.yml\"\
+        \ --jq .id)\n[[ \"$PUBLISHER_ID\" =~ ^[1-9][0-9]*$ ]]\nSOURCE_RUN_ID=$(gh api \"repos/$GITHUB_REPOSITORY/actions/runs/$RECOVERY_RUN_ID\"\
+        \ \\\n  --jq \"select(.workflow_id == $PUBLISHER_ID and .head_branch == \\\"master\\\"\n    and (.event == \\\"workflow_run\\\
+        \" or .event == \\\"workflow_dispatch\\\")) | .id\")\nif [ \"$SOURCE_RUN_ID\" != \"$RECOVERY_RUN_ID\" ]; then\n  echo\
+        \ \"::error::Stable recovery requires a Release Publish run on master from a publisher event.\"\n  exit 1\nfi\n# Its\
+        \ finalized artifact remains valid after a later Docker/MCP failure.\n"
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      if: (github.event_name == 'workflow_run' && github.event.workflow_run.name == 'Release Publish') || (github.event_name
+        == 'workflow_dispatch' && inputs.channel == 'stable')
+      with:
+        persist-credentials: false
+        sparse-checkout: .github/actions/read-finalized-release
+    - id: finalized
+      if: (github.event_name == 'workflow_run' && github.event.workflow_run.name == 'Release Publish') || (github.event_name
+        == 'workflow_dispatch' && inputs.channel == 'stable')
+      uses: ./.github/actions/read-finalized-release
+      env:
+        GH_TOKEN: ${{ github.token }}
+      with:
+        run-id: ${{ github.event.workflow_run.id || inputs.release_publish_run_id }}
     - name: Pick the leg from the trigger
       id: decide
       env:
@@ -55,28 +90,30 @@ jobs:
         TRIGGER_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
         TRIGGER_RUN_ID: ${{ github.event.workflow_run.id }}
         TRIGGER_BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
+        FINALIZED_TAG: ${{ steps.finalized.outputs.tag }}
       run: "if [ \"$TRIGGER_BRANCH\" != master ]; then\n  echo \"::warning::Ignoring a run from ${TRIGGER_BRANCH}; the mirror\
         \ follows master only.\"\n  echo \"channel=skip\" >> \"$GITHUB_OUTPUT\"\n  exit 0\nfi\ncase \"$EVENT\" in\n  push)\
         \ echo \"channel=none\" >> \"$GITHUB_OUTPUT\"; exit 0 ;;\n  workflow_dispatch)\n    if [ \"$DISPATCH_CHANNEL\" = stable\
-        \ ]; then\n      echo \"channel=stable\" >> \"$GITHUB_OUTPUT\"\n      exit 0\n    fi\n    # A dev dispatch pins the\
-        \ build Publish Dev Channel made of this\n    # very commit; there is none for a docs-only commit it skipped.\n  \
-        \  TRIGGER_RUN_ID=$(gh api \\\n      \"repos/${{ github.repository }}/actions/workflows/publish-dev.yml/runs?head_sha=${GITHUB_SHA}&per_page=1\"\
-        \ \\\n      --jq '.workflow_runs[0].id // empty')\n    if [ -z \"$TRIGGER_RUN_ID\" ]; then\n      echo \"::error::Publish\
-        \ Dev Channel never built ${GITHUB_SHA}; nothing to pin.\"\n      exit 1\n    fi\n    TRIGGER_WORKFLOW=\"Publish Dev\
-        \ Channel\"\n    ;;\nesac\nif [ \"$TRIGGER_CONCLUSION\" = \"skipped\" ]; then\n  echo \"Triggering run was skipped\
-        \ in its entirety - nothing to sync.\"\n  echo \"channel=skip\" >> \"$GITHUB_OUTPUT\"\n  exit 0\nfi\nif [ \"$TRIGGER_WORKFLOW\"\
-        \ = \"SemVer Release\" ]; then\n  job=\"Semantic Release\"; leg=stable\nelse\n  job=\"Publish PyPI (dev channel)\"\
-        ; leg=dev\nfi\nif ! conclusion=$(gh api \\\n  \"repos/${{ github.repository }}/actions/runs/${TRIGGER_RUN_ID}/jobs?per_page=100\"\
-        \ \\\n  --jq \"[.jobs[] | select(.name == \\\"$job\\\") | .conclusion] | first // empty\"); then\n  if [ \"$leg\"\
-        \ = stable ]; then\n    echo \"::warning::Could not query the triggering run's jobs; failing open.\"\n    echo \"\
-        channel=stable\" >> \"$GITHUB_OUTPUT\"\n  elif [ \"$EVENT\" = workflow_dispatch ]; then\n    # A maintainer asked\
-        \ for this pre-release: fail and say why.\n    echo \"::error::Could not query Publish Dev Channel run ${TRIGGER_RUN_ID}'s\
-        \ jobs.\"\n    exit 1\n  else\n    echo \"::warning::Could not query the triggering run's jobs; skipping this dev\
-        \ build.\"\n    echo \"channel=skip\" >> \"$GITHUB_OUTPUT\"\n  fi\n  exit 0\nfi\necho \"'$job' conclusion: ${conclusion:-<job\
-        \ absent>}\"\nif [ \"$conclusion\" = success ] || { [ \"$leg\" = stable ] && [ -z \"$conclusion\" ]; }; then\n  echo\
-        \ \"channel=$leg\" >> \"$GITHUB_OUTPUT\"\n  echo \"dev_run=$TRIGGER_RUN_ID\" >> \"$GITHUB_OUTPUT\"\nelif [ \"$EVENT\"\
-        \ = workflow_dispatch ]; then\n  echo \"::error::'$job' in Publish Dev Channel run ${TRIGGER_RUN_ID} is ${conclusion:-absent},\
-        \ not success; no dev build to pin.\"\n  exit 1\nelse\n  echo \"channel=skip\" >> \"$GITHUB_OUTPUT\"\nfi\n"
+        \ ]; then\n      TRIGGER_WORKFLOW=\"Release Publish\"\n    else\n      # A dev dispatch pins the build of this exact\
+        \ commit.\n      TRIGGER_RUN_ID=$(gh api \\\n        \"repos/${{ github.repository }}/actions/workflows/publish-dev.yml/runs?head_sha=${GITHUB_SHA}&per_page=1\"\
+        \ \\\n        --jq '.workflow_runs[0].id // empty')\n      if [ -z \"$TRIGGER_RUN_ID\" ]; then\n        echo \"::error::Publish\
+        \ Dev Channel never built ${GITHUB_SHA}; nothing to pin.\"\n        exit 1\n      fi\n      TRIGGER_WORKFLOW=\"Publish\
+        \ Dev Channel\"\n    fi\n    ;;\nesac\nif [ \"$TRIGGER_CONCLUSION\" = \"skipped\" ]; then\n  echo \"Triggering run\
+        \ was skipped in its entirety - nothing to sync.\"\n  echo \"channel=skip\" >> \"$GITHUB_OUTPUT\"\n  exit 0\nfi\n\
+        if [ \"$TRIGGER_WORKFLOW\" = \"Release Publish\" ]; then\n  if [ -z \"$FINALIZED_TAG\" ]; then\n    if [ \"$EVENT\"\
+        \ = workflow_dispatch ]; then\n      echo \"::error::No current finalized tag in that Release Publish run. Retry the\
+        \ current publisher before recovering the mirror.\"\n      exit 1\n    fi\n    echo \"channel=skip\" >> \"$GITHUB_OUTPUT\"\
+        \n  else\n    echo \"channel=stable\" >> \"$GITHUB_OUTPUT\"\n    echo \"finalized_tag=$FINALIZED_TAG\" >> \"$GITHUB_OUTPUT\"\
+        \n  fi\n  exit 0\nfi\njob=\"Publish PyPI (dev channel)\"\nif ! conclusion=$(gh api \\\n  \"repos/${{ github.repository\
+        \ }}/actions/runs/${TRIGGER_RUN_ID}/jobs?per_page=100\" \\\n  --jq \"[.jobs[] | select(.name == \\\"$job\\\") | .conclusion]\
+        \ | first // empty\"); then\n  if [ \"$EVENT\" = workflow_dispatch ]; then\n    # A maintainer asked for this pre-release:\
+        \ fail and say why.\n    echo \"::error::Could not query Publish Dev Channel run ${TRIGGER_RUN_ID}'s jobs.\"\n   \
+        \ exit 1\n  else\n    echo \"::warning::Could not query the triggering run's jobs; skipping this dev build.\"\n  \
+        \  echo \"channel=skip\" >> \"$GITHUB_OUTPUT\"\n  fi\n  exit 0\nfi\necho \"'$job' conclusion: ${conclusion:-<job absent>}\"\
+        \nif [ \"$conclusion\" = success ]; then\n  echo \"channel=dev\" >> \"$GITHUB_OUTPUT\"\n  echo \"dev_run=$TRIGGER_RUN_ID\"\
+        \ >> \"$GITHUB_OUTPUT\"\nelif [ \"$EVENT\" = workflow_dispatch ]; then\n  echo \"::error::'$job' in Publish Dev Channel\
+        \ run ${TRIGGER_RUN_ID} is ${conclusion:-absent}, not success; no dev build to pin.\"\n  exit 1\nelse\n  echo \"channel=skip\"\
+        \ >> \"$GITHUB_OUTPUT\"\nfi\n"
     if: ${{ vars.QA_ARMED == 'true' && github.sha != vars.QA_BOOTSTRAP_SHA && (true) }}
   sync:
     needs: gate
@@ -105,15 +142,15 @@ jobs:
       id: release
       env:
         TRIGGER_SHA: ${{ github.event.workflow_run.head_sha }}
-      run: "case \"$CHANNEL\" in\n  stable)\n    # The release semantic-release cut from the triggering commit is\n    # the\
-        \ first stable tag that contains it; the newest tag could be\n    # a later release when this run waited in the queue.\
-        \ A recovery\n    # dispatch has no trigger and re-tags the newest. That commit\n    # carries the stamped manifest:\
-        \ snapshot ITS component, not\n    # master's tip. A separate worktree keeps this workflow's own\n    # scripts: a\
-        \ recovery dispatch may target an older tag.\n    stable_tags() { grep -E '^v[0-9]+\\.[0-9]+\\.[0-9]+$' | sort -V;\
-        \ }\n    VER=\"\"\n    if [ -n \"$TRIGGER_SHA\" ]; then\n      VER=$(git tag -l 'v*' --contains \"$TRIGGER_SHA\" |\
-        \ stable_tags | head -n 1)\n    fi\n    if [ -z \"$VER\" ]; then\n      VER=$(git tag -l 'v*' | stable_tags | tail\
-        \ -n 1)\n    fi\n    VER=\"${VER#v}\"\n    SRC=\"$RUNNER_TEMP/release-src\"\n    git worktree add --quiet --detach\
-        \ \"$SRC\" \"v${VER}\"\n    PIN=\"$VER\"\n    TAG=\"v${VER}\"\n    DIST=ha-mcp\n    ;;\n  dev)\n    # Publish Dev\
+        FINALIZED_TAG: ${{ needs.gate.outputs.finalized_tag }}
+        GH_TOKEN: ${{ github.token }}
+      run: "case \"$CHANNEL\" in\n  stable)\n    # Release Publish's head_sha is not the SemVer producer commit.\n    # Automatic\
+        \ and manual runs both require the publisher's marker.\n    TAG=\"${FINALIZED_TAG:?A finalized Release Publish tag\
+        \ is required}\"\n    [[ \"$TAG\" =~ ^v[0-9]+\\.[0-9]+\\.[0-9]+$ ]]\n    CURRENT=$(gh api \"repos/$GITHUB_REPOSITORY/git/ref/tags/stable\"\
+        \ --jq .object.sha)\n    TARGET=$(gh api \"repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG\" --jq .object.sha)\n    if\
+        \ [ \"$CURRENT\" != \"$TARGET\" ]; then\n      echo \"::error::The finalized tag no longer matches stable; refusing\
+        \ mirror recovery.\"\n      exit 1\n    fi\n    VER=\"${TAG#v}\"\n    SRC=\"$RUNNER_TEMP/release-src\"\n    git worktree\
+        \ add --quiet --detach \"$SRC\" \"v${VER}\"\n    PIN=\"$VER\"\n    DIST=ha-mcp\n    ;;\n  dev)\n    # Publish Dev\
         \ Channel uploaded this commit as ha-mcp-dev; pin the\n    # version it uploaded, not a recomputed one.\n    PIN=$(cat\
         \ \"$RUNNER_TEMP/dev-version/dev-version.txt\")\n    if ! [[ \"$PIN\" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+\\.dev[0-9]+$ ]];\
         \ then\n      echo \"::error::The dev build reported '${PIN}', not a dev version.\"\n      exit 1\n    fi\n    VER=\"\
@@ -205,41 +242,47 @@ jobs:
         \ >> \"$GITHUB_ENV\"\n    exit 0\n  fi\nfi\nMARKER=/tmp/mirror/.github/component-zip-source.json\n[ -f \"$MARKER\"\
         \ ] || exit 0\nSOURCE_REPOSITORY=$(python3 -c \"import json; print(json.load(open('$MARKER'))['repository'])\")\n\
         SOURCE_TAG=$(python3 -c \"import json; print(json.load(open('$MARKER'))['tag'])\")\nfor _ in $(seq 1 40); do\n  DIGEST=$(gh\
-        \ api \"repos/${SOURCE_REPOSITORY}/releases/tags/${SOURCE_TAG}\" \\\n    --jq '.assets[] | select(.name == \"ha_mcp_tools.zip\"\
-        \ and .state == \"uploaded\" and .size > 0) | .digest' 2>/dev/null || true)\n  if [[ \"$DIGEST\" =~ ^sha256:[0-9a-f]{64}$\
-        \ ]]; then\n    ZIP_DIR=\"$RUNNER_TEMP/upstream-integration-zip\"\n    mkdir -p \"$ZIP_DIR\"\n    gh release download\
-        \ \"$SOURCE_TAG\" --repo \"$SOURCE_REPOSITORY\" \\\n      --pattern ha_mcp_tools.zip --dir \"$ZIP_DIR\" --clobber\n\
-        \    echo \"${DIGEST#sha256:}  $ZIP_DIR/ha_mcp_tools.zip\" | sha256sum --check -\n    git -C /tmp/mirror diff --exit-code\
-        \ HEAD -- custom_components/ha_mcp_tools\n    VERIFIED_DIGEST=$(python3 scripts/build_component_zip.py \\\n      --component-dir\
-        \ /tmp/mirror/custom_components/ha_mcp_tools \\\n      --verify \"$ZIP_DIR/ha_mcp_tools.zip\")\n    [ \"$VERIFIED_DIGEST\"\
-        \ = \"$DIGEST\" ]\n    python3 - \"$MARKER\" \"$VERIFIED_DIGEST\" <<'PY'\nimport json, pathlib, sys\npath = pathlib.Path(sys.argv[1])\n\
-        metadata = json.loads(path.read_text())\nmetadata['digest'] = sys.argv[2]\npath.write_text(json.dumps(metadata, indent=2)\
-        \ + '\\n')\nPY\n    # Keep main unstamped; only this local release commit is tagged.\n    git -C /tmp/mirror add .github/component-zip-source.json\n\
-        \    if ! git -C /tmp/mirror diff --cached --quiet; then\n      git -C /tmp/mirror commit -m \"Bind integration ZIP\
-        \ to verified snapshot\"\n    fi\n    exit 0\n  fi\n  sleep 15\ndone\necho \"::error::The upstream ZIP is unavailable;\
-        \ not creating a mirror tag.\"\nexit 1\n"
+        \ api \"repos/${SOURCE_REPOSITORY}/releases/tags/${SOURCE_TAG}\" \\\n    --jq 'select(.draft == false) | .assets[]\
+        \ | select(.name == \"ha_mcp_tools.zip\" and .state == \"uploaded\" and .size > 0) | .digest' 2>/dev/null || true)\n\
+        \  if [[ \"$DIGEST\" =~ ^sha256:[0-9a-f]{64}$ ]]; then\n    ZIP_DIR=\"$RUNNER_TEMP/upstream-integration-zip\"\n  \
+        \  mkdir -p \"$ZIP_DIR\"\n    gh release download \"$SOURCE_TAG\" --repo \"$SOURCE_REPOSITORY\" \\\n      --pattern\
+        \ ha_mcp_tools.zip --dir \"$ZIP_DIR\" --clobber\n    echo \"${DIGEST#sha256:}  $ZIP_DIR/ha_mcp_tools.zip\" | sha256sum\
+        \ --check -\n    git -C /tmp/mirror diff --exit-code HEAD -- custom_components/ha_mcp_tools\n    VERIFIED_DIGEST=$(python3\
+        \ scripts/build_component_zip.py \\\n      --component-dir /tmp/mirror/custom_components/ha_mcp_tools \\\n      --verify\
+        \ \"$ZIP_DIR/ha_mcp_tools.zip\")\n    [ \"$VERIFIED_DIGEST\" = \"$DIGEST\" ]\n    python3 - \"$MARKER\" \"$VERIFIED_DIGEST\"\
+        \ <<'PY'\nimport json, pathlib, sys\npath = pathlib.Path(sys.argv[1])\nmetadata = json.loads(path.read_text())\nmetadata['digest']\
+        \ = sys.argv[2]\npath.write_text(json.dumps(metadata, indent=2) + '\\n')\nPY\n    # Keep main unstamped; only this\
+        \ local release commit is tagged.\n    git -C /tmp/mirror add .github/component-zip-source.json\n    if ! git -C /tmp/mirror\
+        \ diff --cached --quiet; then\n      git -C /tmp/mirror commit -m \"Bind integration ZIP to verified snapshot\"\n\
+        \    fi\n    exit 0\n  fi\n  sleep 15\ndone\necho \"::error::The upstream ZIP is unavailable; not creating a mirror\
+        \ tag.\"\nexit 1\n"
     - name: Tag the mirror
       if: env.CHANNEL == 'stable' || env.CHANNEL == 'dev'
       env:
+        GH_TOKEN: ${{ github.token }}
         GIT_SSH_COMMAND: ssh -i ~/.ssh/mirror_key -o IdentitiesOnly=yes
         VER: ${{ steps.release.outputs.version }}
         TAG: ${{ steps.release.outputs.tag }}
         SOURCE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
       run: "if [ \"${SKIP_MIRROR_TAG:-false}\" = true ]; then\n  echo \"No mirror tag needed at ZIP verification; skipping\
-        \ tag creation.\"\n  exit 0\nfi\n# Captures instead of `| grep -q .`: without pipefail a FAILED\n# ls-remote looks\
-        \ identical to \"tag absent\"; a bare assignment under\n# set -e aborts loud instead. Every release is a new shared\
-        \ version,\n# so an existing tag only means this run already happened.\nexisting=$(git -C /tmp/mirror ls-remote --tags\
-        \ origin \"refs/tags/${TAG}\")\nif [ -n \"$existing\" ]; then\n  echo \"mirror tag ${TAG} exists - nothing to do\"\
-        \n  exit 0\nfi\nif [ \"$CHANNEL\" = stable ]; then\n  # The tag message is the release body (the deploy key cannot\
-        \ call\n  # the API; the mirror's release-on-tag.yml reads the message).\n  # --cleanup=verbatim keeps the markdown\
-        \ headings `git tag -F`\n  # would otherwise strip as comments.\n  python3 scripts/build_mirror_release_notes.py \\\
-        \n    --tag \"$TAG\" --out /tmp/mirror_notes.md\nelse\n  stable_exists=$(git -C /tmp/mirror ls-remote --tags origin\
-        \ \"refs/tags/v${VER}\")\n  if [ -n \"$stable_exists\" ]; then\n    echo \"v${VER} is already released as stable -\
-        \ skipping dev tag\"\n    exit 0\n  fi\n  # One line per pull request merged since the previous dev build.\n  python3\
-        \ scripts/build_mirror_release_notes.py \\\n    --dev-pin \"${{ steps.release.outputs.pin }}\" \\\n    --dist \"${{\
-        \ steps.release.outputs.dist }}\" \\\n    --source \"$SOURCE_SHA\" \\\n    --source-label \"${GITHUB_REPOSITORY}@${SOURCE_SHA}\"\
-        \ \\\n    --out /tmp/mirror_notes.md\nfi\necho \"--- release notes for ${TAG} ---\"\ncat /tmp/mirror_notes.md\ncd\
-        \ /tmp/mirror\ngit tag -a \"${TAG}\" -F /tmp/mirror_notes.md --cleanup=verbatim\ngit push origin \"${TAG}\"\n"
+        \ tag creation.\"\n  exit 0\nfi\n# Publication can advance while the earlier pin/asset waits run.\nif [ \"$CHANNEL\"\
+        \ = stable ]; then\n  CURRENT=$(gh api \"repos/$GITHUB_REPOSITORY/git/ref/tags/stable\" --jq .object.sha)\n  TARGET=$(gh\
+        \ api \"repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG\" --jq .object.sha)\n  if [ \"$CURRENT\" != \"$TARGET\" ]; then\n\
+        \    echo \"::error::Stable changed after resolution; refusing the mirror tag.\"\n    exit 1\n  fi\nfi\n# Captures\
+        \ instead of `| grep -q .`: without pipefail a FAILED\n# ls-remote looks identical to \"tag absent\"; a bare assignment\
+        \ under\n# set -e aborts loud instead. Every release is a new shared version,\n# so an existing tag only means this\
+        \ run already happened.\nexisting=$(git -C /tmp/mirror ls-remote --tags origin \"refs/tags/${TAG}\")\nif [ -n \"$existing\"\
+        \ ]; then\n  echo \"mirror tag ${TAG} exists - nothing to do\"\n  exit 0\nfi\nif [ \"$CHANNEL\" = stable ]; then\n\
+        \  # The tag message is the release body (the deploy key cannot call\n  # the API; the mirror's release-on-tag.yml\
+        \ reads the message).\n  # --cleanup=verbatim keeps the markdown headings `git tag -F`\n  # would otherwise strip\
+        \ as comments.\n  python3 scripts/build_mirror_release_notes.py \\\n    --tag \"$TAG\" --out /tmp/mirror_notes.md\n\
+        else\n  stable_exists=$(git -C /tmp/mirror ls-remote --tags origin \"refs/tags/v${VER}\")\n  if [ -n \"$stable_exists\"\
+        \ ]; then\n    echo \"v${VER} is already released as stable - skipping dev tag\"\n    exit 0\n  fi\n  # One line per\
+        \ pull request merged since the previous dev build.\n  python3 scripts/build_mirror_release_notes.py \\\n    --dev-pin\
+        \ \"${{ steps.release.outputs.pin }}\" \\\n    --dist \"${{ steps.release.outputs.dist }}\" \\\n    --source \"$SOURCE_SHA\"\
+        \ \\\n    --source-label \"${GITHUB_REPOSITORY}@${SOURCE_SHA}\" \\\n    --out /tmp/mirror_notes.md\nfi\necho \"---\
+        \ release notes for ${TAG} ---\"\ncat /tmp/mirror_notes.md\ncd /tmp/mirror\ngit tag -a \"${TAG}\" -F /tmp/mirror_notes.md\
+        \ --cleanup=verbatim\ngit push origin \"${TAG}\"\n"
     outputs:
       qa_tag: ${{ steps.release.outputs.tag }}
       qa_pin: ${{ steps.release.outputs.pin }}

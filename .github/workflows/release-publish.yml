@@ -11,14 +11,19 @@ on:
   workflow_dispatch: null
 env:
   REGISTRY: ghcr.io
+concurrency:
+  group: release-publish
+  cancel-in-progress: false
+  queue: max
 jobs:
   prepare:
     name: Prepare release metadata
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    if: ${{ vars.QA_ARMED == 'true' && github.sha != vars.QA_BOOTSTRAP_SHA && (github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success') }}
+      actions: read
+    if: ${{ vars.QA_ARMED == 'true' && github.sha != vars.QA_BOOTSTRAP_SHA && (github.repository == 'julienld/ha-mcp-release-qa-20261107'
+      && github.ref == 'refs/heads/master') }}
     outputs:
       version: ${{ steps.version.outputs.version }}
       release_tag: ${{ steps.version.outputs.release_tag }}
@@ -29,41 +34,33 @@ jobs:
         persist-credentials: false
         ref: master
         fetch-depth: 0
-    - name: Verify master is at the latest stable tag
+    - name: Select the release from its producing run
+      id: source
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        TRIGGER_RUN_ID: ${{ github.event.workflow_run.id }}
+        EVENT_NAME: ${{ github.event_name }}
+      run: "set -euo pipefail\nif [ \"$EVENT_NAME\" = workflow_run ]; then\n  # Gated/no-change runs have no release artifact.\
+        \ Master may have\n  # advanced since a real release: never infer this run's tag from it.\n  COUNT=$(gh api \"repos/$GITHUB_REPOSITORY/actions/runs/$TRIGGER_RUN_ID/artifacts\"\
+        \ \\\n    --jq '[.artifacts[] | select(.name == \"stable-release-tag\")] | length')\n  if [ \"$COUNT\" -eq 0 ]; then\n\
+        \    echo \"No release was recorded by this SemVer run.\"\n    echo \"tag=\" >> \"$GITHUB_OUTPUT\"\n    exit 0\n \
+        \ fi\n  gh run download \"$TRIGGER_RUN_ID\" --repo \"$GITHUB_REPOSITORY\" \\\n    --name stable-release-tag --dir\
+        \ \"$RUNNER_TEMP/release-metadata\"\n  TAG=$(cat \"$RUNNER_TEMP/release-metadata/release-tag.txt\")\nelse\n  TAG=$(git\
+        \ describe --tags --abbrev=0 --match 'v[0-9]*' --exclude '*dev*')\nfi\n[[ \"$TAG\" =~ ^v[0-9]+\\.[0-9]+\\.[0-9]+$\
+        \ ]]\necho \"tag=$TAG\" >> \"$GITHUB_OUTPUT\"\n"
+    - name: Read metadata from the selected release tag
       id: version
-      run: "set -euo pipefail\n\n# Resolve the latest stable tag. A real failure (corrupt repo, shallow\n# clone missing tags,\
-        \ etc.) should fail loudly \u2014 only exit-code 128\n# from `git describe` means \"no matching tags exist in history\"\
-        \ and is\n# benign for a fresh repo with no stable releases yet.\nset +e\nLATEST_TAG=$(git describe --tags --abbrev=0\
-        \ --match 'v[0-9]*' --exclude '*dev*' 2>&1)\nDESCRIBE_RC=$?\nset -e\nif [ \"$DESCRIBE_RC\" -eq 128 ]; then\n  echo\
-        \ \"::warning::No stable tag found; skipping Release Publish.\"\n  echo \"should_publish=false\" >> \"$GITHUB_OUTPUT\"\
-        \n  echo \"version=\" >> \"$GITHUB_OUTPUT\"\n  echo \"release_tag=\" >> \"$GITHUB_OUTPUT\"\n  echo \"## Release Publish\
-        \ skipped\" >> \"$GITHUB_STEP_SUMMARY\"\n  echo \"No stable tag found in repository.\" >> \"$GITHUB_STEP_SUMMARY\"\
-        \n  exit 0\nelif [ \"$DESCRIBE_RC\" -ne 0 ]; then\n  echo \"::error::git describe failed (rc=$DESCRIBE_RC): $LATEST_TAG\"\
-        \n  exit \"$DESCRIBE_RC\"\nfi\necho \"release_tag=$LATEST_TAG\" >> \"$GITHUB_OUTPUT\"\necho \"Latest stable tag: $LATEST_TAG\"\
-        \n\n# Read the version from pyproject.toml AT THE TAG, not master HEAD, so\n# we publish what was tagged even if master\
-        \ has advanced. Prevents the\n# \"workflow_dispatch bumped pyproject ahead of tag\" corner case.\nVERSION=$(git show\
-        \ \"$LATEST_TAG:pyproject.toml\" \\\n  | grep '^version = ' | sed 's/version = \"\\(.*\\)\"/\\1/')\nif [ -z \"$VERSION\"\
-        \ ]; then\n  echo \"::error::Could not parse version from $LATEST_TAG:pyproject.toml\"\n  exit 1\nfi\necho \"version=$VERSION\"\
-        \ >> \"$GITHUB_OUTPUT\"\necho \"Tagged pyproject version: $VERSION\"\n\nTAG_SHA=$(git rev-list -n 1 \"$LATEST_TAG\"\
-        )\nHEAD_SHA=$(git rev-parse HEAD)\n\n# Normal release weeks: semver-release tags the release commit, then\n# pushes\
-        \ follow-up housekeeping commits to master (changelog sync,\n# addon version bump \u2014 all `[skip ci]`). HEAD !=\
-        \ tag in that case,\n# but the release IS current. Mirror semver-release.yml's check-changes\n# logic: block only\
-        \ if there are releasable commits\n# on master since the tag that would have produced a new version.\nRELEASABLE=$(git\
-        \ log \"$LATEST_TAG..HEAD\" --oneline -E \\\n  --grep='^(feat|fix|perf|refactor)(\\(.+\\))?!?:' \\\n  --grep='^[a-z]+(\\\
-        (.+\\))?!:' \\\n  --grep='^BREAKING[ -]CHANGE:' || true)\n\nif [ -n \"$RELEASABLE\" ]; then\n  if [ \"${{ github.event_name\
-        \ }}\" = \"workflow_dispatch\" ]; then\n    echo \"::notice::Manual dispatch: unreleased commits exist on master since\
-        \ $LATEST_TAG. Forcing republish of $LATEST_TAG from the tag ref (master HEAD $HEAD_SHA is being ignored).\"\n   \
-        \ echo \"## Release Publish \u2014 forced republish\" >> \"$GITHUB_STEP_SUMMARY\"\n    echo \"Building \\`$LATEST_TAG\\\
-        ` ($TAG_SHA); unreleased commits on master were ignored.\" >> \"$GITHUB_STEP_SUMMARY\"\n  else\n    echo \"::notice::Unreleased\
-        \ commits exist on master since $LATEST_TAG; no new release to publish \u2014 skipping.\"\n    echo \"should_publish=false\"\
-        \ >> \"$GITHUB_OUTPUT\"\n    echo \"## Release Publish skipped\" >> \"$GITHUB_STEP_SUMMARY\"\n    echo \"master has\
-        \ releasable commits since the latest stable tag \\`$LATEST_TAG\\` but no new tag was cut, so republishing \\`$LATEST_TAG\\\
-        ` would be misleading.\" >> \"$GITHUB_STEP_SUMMARY\"\n    echo \"This is expected on biweekly-gate odd weeks; the\
-        \ re-triggered \\`workflow_run\\` is being correctly ignored.\" >> \"$GITHUB_STEP_SUMMARY\"\n    exit 0\n  fi\nfi\n\
-        \necho \"should_publish=true\" >> \"$GITHUB_OUTPUT\"\necho \"Release version: $VERSION (tag $LATEST_TAG)\"\necho \"\
-        ## Release Publish \u2014 $VERSION\" >> \"$GITHUB_STEP_SUMMARY\"\necho \"Building from tag \\`$LATEST_TAG\\` ($TAG_SHA).\"\
-        \ >> \"$GITHUB_STEP_SUMMARY\"\nif [ \"$TAG_SHA\" != \"$HEAD_SHA\" ]; then\n  echo \"(master HEAD is $HEAD_SHA \u2014\
-        \ post-tag housekeeping commits only, no releasable changes.)\" >> \"$GITHUB_STEP_SUMMARY\"\nfi\n"
+      env:
+        RELEASE_TAG: ${{ steps.source.outputs.tag }}
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: "set -euo pipefail\nif [ -z \"$RELEASE_TAG\" ]; then\n  echo \"should_publish=false\" >> \"$GITHUB_OUTPUT\"\n \
+        \ exit 0\nfi\n# Stop an old completed run before any mutable channel is published.\nif git rev-parse --verify refs/tags/stable\
+        \ >/dev/null 2>&1 && \\\n  ! git merge-base --is-ancestor 'stable^{commit}' \"$RELEASE_TAG^{commit}\"; then\n  echo\
+        \ \"::notice::$RELEASE_TAG predates stable; ignoring this old retry.\"\n  echo \"should_publish=false\" >> \"$GITHUB_OUTPUT\"\
+        \n  exit 0\nfi\nVERSION=$(git show \"$RELEASE_TAG:pyproject.toml\" \\\n  | grep '^version = ' | sed 's/version = \"\
+        \\(.*\\)\"/\\1/')\n[ \"v$VERSION\" = \"$RELEASE_TAG\" ]\necho \"release_tag=$RELEASE_TAG\" >> \"$GITHUB_OUTPUT\"\n\
+        echo \"version=$VERSION\" >> \"$GITHUB_OUTPUT\"\necho \"should_publish=true\" >> \"$GITHUB_OUTPUT\"\necho \"Building\
+        \ from $RELEASE_TAG, regardless of later master commits.\"\n"
   publish_pypi:
     name: Publish PyPI package
     needs: prepare
@@ -94,9 +91,76 @@ jobs:
       run: uv run -s .qa/runtime.py publish-index --dist dist
       env:
         QA_DEPLOY_KEY: ${{ secrets.INTEGRATION_MIRROR_DEPLOY_KEY }}
+  finalize_github_release:
+    name: Finalize stable GitHub release
+    needs:
+    - prepare
+    - publish_pypi
+    if: ${{ github.repository == 'julienld/ha-mcp-release-qa-20261107' && github.ref == 'refs/heads/master' && needs.prepare.outputs.should_publish
+      == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        ref: ${{ github.workflow_sha }}
+        path: publisher
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        ref: ${{ needs.prepare.outputs.release_tag }}
+        path: release-source
+        fetch-depth: 0
+    - name: Generate GitHub App token for the stable alias
+      id: app-token
+      uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510
+      with:
+        app-id: ${{ secrets.RELEASE_APP_ID }}
+        private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+        permission-contents: write
+      continue-on-error: true
+      if: ${{ github.repository == 'homeassistant-ai/ha-mcp' }}
+    - name: Install uv
+      uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
+      with:
+        version: 0.13.4
+    - name: QA observe state before the real finalizer
+      run: uv run -s publisher/.qa/runtime.py pre-finalization --tag "$RELEASE_TAG"
+      env:
+        GH_TOKEN: ${{ github.token }}
+        RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+        QA_STAGE: ${{ vars.QA_STAGE }}
+    - name: Finalize only after the package and requested asset are ready
+      env:
+        GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+        RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+      run: "uv run -s publisher/scripts/finalize_github_release.py \\\n  --repository \"$GITHUB_REPOSITORY\" --tag \"$RELEASE_TAG\"\
+        \ \\\n  --hacs release-source/hacs.json \\\n  --component release-source/custom_components/ha_mcp_tools/manifest.json\
+        \ \\\n  --pyproject release-source/pyproject.toml --checkout release-source\n"
+    - name: Record finalized stable tag
+      env:
+        RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+      run: printf '%s\n' "$RELEASE_TAG" > finalized-release-tag.txt
+    - name: Signal successful finalization to docs and mirror
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: finalized-release-tag
+        path: finalized-release-tag.txt
+        if-no-files-found: error
+        overwrite: true
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      if: ${{ always() }}
+      with:
+        name: qa-prefinalization
+        path: qa-prefinalization.json
   publish_docker:
     name: Publish Docker image
-    needs: prepare
+    needs:
+    - prepare
+    - finalize_github_release
     if: ${{ needs.prepare.outputs.should_publish == 'true' }}
     runs-on: ubuntu-latest
     permissions:
@@ -114,6 +178,12 @@ jobs:
     - name: QA controlled failure after GitHub finalization
       if: ${{ vars.QA_FAIL_DOCKER == 'true' }}
       run: echo 'Controlled QA failure after finalization'; exit 1
+    - name: Protect mutable image tags on a partial old rerun
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: "set -euo pipefail\nCURRENT=$(gh api \"repos/$GITHUB_REPOSITORY/releases/latest\" --jq .tag_name)\nif [ \"$CURRENT\"\
+        \ != \"v$VERSION\" ]; then\n  echo \"::error::v$VERSION is no longer the current release; refusing to move stable/latest\
+        \ images.\"\n  exit 1\nfi\n"
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
     - name: Log in to GitHub Container Registry
@@ -222,6 +292,7 @@ jobs:
     needs:
     - prepare
     - publish_pypi
+    - finalize_github_release
     - publish_docker
     - publish_mcp
     if: ${{ always() && vars.QA_ARMED == 'true' }}
