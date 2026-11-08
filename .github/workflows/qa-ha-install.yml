@@ -1,0 +1,75 @@
+name: QA Install Workflow Release In HA
+on:
+  workflow_dispatch:
+    inputs:
+      verification_run:
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+  statuses: write
+  pull-requests: write
+env:
+  GH_TOKEN: ${{ github.token }}
+  QA_OBSERVER_SHA: ${{ vars.QA_OBSERVER_SHA }}
+  QA_OBSERVER_PR: ${{ vars.QA_OBSERVER_PR }}
+  TESTCONTAINERS_RYUK_DISABLED: 'true'
+jobs:
+  install:
+    if: ${{ github.repository == 'julienld/ha-mcp-release-qa-20261107' && vars.QA_ARMED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        path: tooling
+        persist-credentials: false
+    - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
+      with:
+        version: 0.13.4
+    - run: uv python install 3.13
+    - name: Validate exact workflow release inputs
+      id: release
+      run: uv run -s tooling/.qa/runtime.py prepare-ha --verification-run "$VERIFICATION_RUN"
+      env:
+        VERIFICATION_RUN: ${{ inputs.verification_run }}
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ steps.release.outputs.source_tag }}
+        path: source
+        fetch-depth: 0
+        submodules: true
+        persist-credentials: false
+    - name: Retain upstream stable as the compatibility reference
+      working-directory: source
+      run: git fetch --force https://github.com/homeassistant-ai/ha-mcp.git refs/tags/stable:refs/tags/stable
+    - name: Install existing test dependencies
+      working-directory: source
+      run: uv sync --all-extras --dev
+    - name: Pull real HA test image
+      run: docker pull ghcr.io/home-assistant/home-assistant:2026.11.0
+    - name: Install and exercise the actual produced ZIP
+      id: ha
+      working-directory: source/tests
+      run: uv run pytest src/e2e/workflows/embedded/test_embedded_update_path.py -p ha_plugin -m update_path -k working --tb=short
+        -v
+      env:
+        E2E_UPDATE_PATH: '1'
+        HAMCP_ENV_FILE: tests/.env.test
+        PYTHONPATH: ${{ github.workspace }}/tooling/.qa
+        QA_HA_SUBJECT: ${{ github.workspace }}/source
+        QA_HA_ARCHIVE: ${{ runner.temp }}/qa-ha-input/ha_mcp_tools.zip
+        QA_HA_INPUT: ${{ runner.temp }}/qa-ha-input/ha-input.json
+        QA_HA_RECEIPT: ${{ runner.temp }}/qa-ha-input/ha-install-receipt.json
+    - name: Report real HA installation
+      if: ${{ always() && steps.release.outcome == 'success' }}
+      run: uv run -s tooling/.qa/runtime.py report-ha
+      env:
+        QA_HA_OUTCOME: ${{ steps.ha.outcome }}
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      if: ${{ always() }}
+      with:
+        name: qa-ha-installation
+        path: ${{ runner.temp }}/qa-ha-input/*.json
+        retention-days: 30

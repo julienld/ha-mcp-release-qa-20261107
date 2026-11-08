@@ -569,6 +569,113 @@ def report() -> None:
     )
 
 
+def prepare_ha(verification_run: str) -> None:
+    context()
+    if not verification_run.isdigit():
+        raise ValueError("A numeric successful verification run is required")
+    observed = api(SOURCE, "actions/runs/" + verification_run)
+    workflow = api(SOURCE, "actions/workflows/qa-verify-chain.yml")
+    assert (
+        observed["workflow_id"] == workflow["id"]
+        and observed["conclusion"] == "success"
+    )
+    assert observed["event"] == "workflow_run" and observed["head_branch"] == "master"
+    folder = Path(os.environ["RUNNER_TEMP"]) / "qa-ha-input"
+    folder.mkdir(exist_ok=True)
+    run(
+        [
+            "gh",
+            "run",
+            "download",
+            verification_run,
+            "--repo",
+            SOURCE,
+            "--name",
+            "qa-chain-result",
+            "--dir",
+            str(folder),
+        ]
+    )
+    proof = json.loads((folder / "qa-chain-result.json").read_text())
+    assert proof["passed"] and proof["channel"] == "stable"
+    version = proof["manifest"]["version"]
+    with urllib.request.urlopen(
+        INDEX + "/pypi/ha-mcp/" + version + "/json", timeout=30
+    ) as response:
+        metadata = json.load(response)
+    assert metadata["info"]["version"] == version
+    wheel = next(f for f in metadata["urls"] if f["packagetype"] == "bdist_wheel")
+    assert wheel["url"].startswith(INDEX + "/packages/")
+    local_wheel = folder / wheel["filename"]
+    with (
+        urllib.request.urlopen(wheel["url"], timeout=60) as response,
+        local_wheel.open("wb") as output,
+    ):
+        shutil.copyfileobj(response, output)
+    assert digest(local_wheel) == wheel["digests"]["sha256"]
+    run(
+        [
+            "gh",
+            "release",
+            "download",
+            proof["mirror_tag"],
+            "--repo",
+            MIRROR,
+            "--pattern",
+            "ha_mcp_tools.zip",
+            "--dir",
+            str(folder),
+        ]
+    )
+    assert "sha256:" + digest(folder / "ha_mcp_tools.zip") == proof["digest"]
+    value = {
+        **proof,
+        "version": version,
+        "wheel_url": wheel["url"],
+        "wheel_digest": wheel["digests"]["sha256"],
+        "verification_run": verification_run,
+    }
+    write(folder / "ha-input.json", value)
+    with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+        output.write(
+            "source_tag="
+            + proof["source_tag"]
+            + "\nsource_commit="
+            + proof["source_commit"]
+            + "\n"
+        )
+
+
+def report_ha() -> None:
+    context()
+    folder = Path(os.environ["RUNNER_TEMP"]) / "qa-ha-input"
+    proof = json.loads((folder / "ha-input.json").read_text())
+    receipt_path = folder / "ha-install-receipt.json"
+    receipt = json.loads(receipt_path.read_text()) if receipt_path.exists() else {}
+    passed = os.environ.get("QA_HA_OUTCOME") == "success" and bool(
+        receipt.get("baselines")
+    )
+    context_name = "HA installation / " + proof["source_tag"]
+    url = f"https://github.com/{SOURCE}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
+    api(
+        SOURCE,
+        "statuses/" + os.environ["QA_OBSERVER_SHA"],
+        fields={
+            "state": "success" if passed else "failure",
+            "context": context_name,
+            "description": "Actual workflow-produced ZIP and QA wheel in Home Assistant",
+            "target_url": url,
+        },
+    )
+    api(
+        SOURCE,
+        "issues/" + os.environ["QA_OBSERVER_PR"] + "/comments",
+        fields={
+            "body": f"[Agent] HA installation **{'passed' if passed else 'failed'}** for `{proof['source_tag']}`: workflow-produced mirror ZIP, exact QA wheel, existing working-tree update/reinstall/restart/MCP scenario. [Run and receipt]({url})."
+        },
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -580,15 +687,22 @@ def main() -> None:
             "verify-chain",
             "report",
             "pre-finalization",
+            "prepare-ha",
+            "report-ha",
         ),
     )
     parser.add_argument("--dist", type=Path, default=Path("dist"))
     parser.add_argument("--tag")
+    parser.add_argument("--verification-run")
     parser.add_argument(
         "--parent", type=Path, default=Path("parent/qa-workflow-receipt.json")
     )
     args = parser.parse_args()
-    if args.command == "pre-finalization":
+    if args.command == "prepare-ha":
+        prepare_ha(args.verification_run)
+    elif args.command == "report-ha":
+        report_ha()
+    elif args.command == "pre-finalization":
         pre_finalization(args.tag)
     elif args.command == "publish-index":
         publish_index(args.dist)
