@@ -3,6 +3,27 @@
 <!-- version list -->
 
 
+## v9.1.4 (2026-11-08)
+
+### Fixed
+
+- **qa**: Merge ZIP activation for actual workflow rehearsal
+  ([`3fad7ac`](https://github.com/julienld/ha-mcp-release-qa-20261107/commit/3fad7ac813228ba41c67a078462d8f208dceba87))
+- **qa**: Integrate ZIP activation and stable finalization proposal
+  ([`f8cfe31`](https://github.com/julienld/ha-mcp-release-qa-20261107/commit/f8cfe3175b71e3126bbf8b801be319c8032c572a))
+
+---
+<details>
+<summary>Internal Changes</summary>
+
+
+### Chores
+
+- **addon**: Publish version 9.1.3 [skip ci]
+  ([`3ead679`](https://github.com/julienld/ha-mcp-release-qa-20261107/commit/3ead6799335edefeb5690a2c6f9282debde069d7))
+</details>
+
+
 ## v9.1.3 (2026-11-08)
 
 No user-facing changes.
