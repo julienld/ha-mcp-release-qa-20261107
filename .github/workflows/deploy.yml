@@ -41,7 +41,7 @@ jobs:
         version: 0.13.4
     - name: Generate star history charts
       env:
-        GITHUB_TOKEN: ${{ secrets.STAR_HISTORY_TOKEN }}
+        GITHUB_TOKEN: ${{ github.token }}
       run: python3 ../scripts/generate_star_history.py --repository "${{ github.repository }}" --output-dir public/star-history
     - name: Setup Node
       uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1

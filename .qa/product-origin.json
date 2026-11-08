@@ -22,7 +22,7 @@
     },
     "deploy.yml": {
       "production_sha256": "7f01d29e7b5934c0a3fb8c0b61c8a0c986516e2be4aab1327e8a8a10b6e2abc3",
-      "qa_sha256": "bde31f54ceecd87f2594f59a278a294a46a419716df2691236e792c9321423ea"
+      "qa_sha256": "b6d185446e69198dc3bd36a86ddbc0df7c0f2180eac4f6b2606f2e7c6648b65b"
     },
     "addon-publish.yml": {
       "production_sha256": "9d75d9b8068cfbfb9a5428979db7dd7322da5c5329a822745ef9f5b872c8746c",
