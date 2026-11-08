@@ -1,0 +1,302 @@
+# Development reference
+
+Read this document when setting up the repository, running the server, choosing
+verification commands, researching Home Assistant APIs, or orienting yourself
+in the architecture. Behavioral rules about when testing is required remain in
+[`AGENTS.md`](../../AGENTS.md); test implementation details live in
+[`tests/AGENTS.md`](../../tests/AGENTS.md).
+
+## External documentation
+
+| Resource | Use |
+|---|---|
+| [Home Assistant REST API](https://developers.home-assistant.io/docs/api/rest) | Entity states, services, and configuration. |
+| [Home Assistant WebSocket API](https://developers.home-assistant.io/docs/api/websocket) | Events, subscriptions, and in-process commands. |
+| [Home Assistant Core](https://github.com/home-assistant/core) | Undocumented or version-specific behavior. |
+| [Home Assistant app development](https://developers.home-assistant.io/docs/apps) | App packaging and configuration. |
+| [FastMCP](https://gofastmcp.com/getting-started/welcome) | MCP server framework. |
+| [Model Context Protocol](https://modelcontextprotocol.io/docs) | Protocol semantics. |
+
+Prefer current primary sources. When local behavior depends on an undocumented
+Home Assistant detail, verify it against the exact upstream source or a focused
+runtime test rather than relying on memory.
+
+## Setup and server commands
+
+```bash
+uv sync --group dev
+cp .env.example .env
+uv run ha-mcp
+uv run ha-mcp-web
+```
+
+`ha-mcp` uses stdio and needs interactive stdin. `ha-mcp-web` runs HTTP mode
+and serves the settings UI at `http://localhost:8086/mcp/settings`. Settings UI
+details are in
+[`src/ha_mcp/settings_ui/AGENTS.md`](../../src/ha_mcp/settings_ui/AGENTS.md).
+
+## Test commands
+
+E2E tests live in `tests/src/e2e/` (not `tests/e2e/`), use testcontainers,
+and require a running Docker daemon. Launch them from `tests/` so pytest
+loads the correct `conftest.py`. Unit tests in `tests/src/unit/` do not use
+Docker.
+
+For a fork branch, dispatch `gh workflow run pr.yml --repo OWNER/FORK --ref BRANCH`;
+for targeted HAOS tests, use `haos-e2e-tests.yml` instead with
+`-f pytest_paths=PATH -f pytest_args=ARGS`.
+
+```bash
+# Full E2E suite. Use only before claiming the full suite passes.
+(cd tests && uv run pytest src/e2e/ -n2 --dist loadscope -v --tb=short)
+
+# One relevant E2E file.
+(cd tests && uv run pytest src/e2e/workflows/automation/test_lifecycle.py -v)
+
+# Unit suite, parallel as in CI.
+(cd tests && uv run pytest src/unit/ -n auto --tb=short)
+
+# Interactive isolated Home Assistant environment.
+uv run hamcp-test-env
+uv run hamcp-test-env --no-interactive
+```
+
+Locally, `-n2` limits the number of simultaneous Home Assistant containers;
+more workers usually add memory pressure without proportional speed. CI uses
+`-n3`, a value tuned for CI's 2-vCPU, 15 GB runners. The roughly 11,000 unit
+tests take more than 25 minutes serial, so run them in parallel as shown.
+The root `pyproject.toml` sets `--maxfail=3`, so
+a report with three failures may be an early stop; use `--maxfail=0` only when
+the complete failure set is actually needed.
+
+Both testcontainer lanes preinstall pip packages before Home Assistant's
+`/init` — the component's manifest requirements, and on the embedded lane the
+checkout wheel plus its whole dependency tree — so a slow PyPI window can
+outlast the API-ready budget. Two opt-in variables make that survivable on a
+slow host or network:
+
+- `HA_E2E_PIP_CACHE=<dir>` binds that host directory over the image's pip cache
+  (`/root/.cache/pip`) and lets the preinstalls cache wheels, so later runs skip
+  the downloads. The image's `/etc/pip.conf` sets `no-cache-dir = false`, which
+  pip treats as "no cache" whatever the value, so the lanes pass `--cache-dir`
+  explicitly; pip also only caches into a directory owned by uid 0 when it runs
+  as root, so the entrypoint claims the mount for pip and hands it back to the
+  host user when the installs finish, whether or not they succeed. CI leaves it
+  unset: a hosted runner downloads the same wheel tree in a couple of seconds,
+  so the cache would not pay for the wiring there.
+- `HA_E2E_READY_TIMEOUT=<seconds>` overrides the API-ready budget for both
+  testcontainer lanes (480 s embedded, 60 s plain container). A value that is
+  not a positive whole number of seconds fails the run instead of silently
+  falling back to the budget it was meant to escape. CI leaves it unset: its
+  runners are not the slow case this knob exists for.
+
+Do not set `HOMEASSISTANT_URL` manually before testcontainer E2E tests.
+`tests/.env.test` contains placeholders, and the fixture supplies the real
+URL dynamically. The shared token is in `tests/test_constants.py`.
+
+## Code quality
+
+```bash
+uv run ruff format src/ tests/
+uv run ruff check src/ tests/ --fix
+uv run mypy src/
+uv run ast-grep scan
+```
+
+C901 complexity is capped at 10 repository-wide with no per-file exemptions;
+issue #925 removed the grandfathered list, so extract helpers instead of
+adding a `C901` per-file ignore. Lefthook runs `ruff --fix` on commit with
+`stage_fixed`; that can remove a newly added but not-yet-used import from
+non-`__init__` modules. Add an import and its first use in the same change or
+the hook may strip it without a separate Ruff invocation.
+
+Source files are capped at 1,000 lines by
+`tests/src/unit/test_module_size_ratchet.py`. Files that were already larger
+are listed with their line count in
+`tests/src/unit/module_size_baseline.json`; a listed file may shrink but not
+grow, so a file that grew has to be split. Vendored trees, test fixtures and
+the stable webhook-proxy copy are not counted.
+
+Do not edit either ratchet baseline in a pull request: nearly every change to
+a listed file would rewrite the same shared file, and those edits conflict
+with each other. A shrunk or deleted file, or an edited copy, passes the
+checks as it is; after the merge, `sync-ratchet-baselines.yml` updates the
+baselines on `master` with `python scripts/module_size_ratchet.py`, which only
+lowers or drops entries, and `python scripts/duplicate_code_ratchet.py`, which
+rewrites its baseline only when no group gained a copy. Neither accepts
+growth. Lowering an entry by hand remains possible as a maintainer escape
+hatch; the checks below reject only a raised entry or a new copy. The lefthook
+pre-commit hook runs both commands with `--staged --check`, which reports
+violations in the staged content without writing a baseline.
+
+Never raise or add a baseline entry by hand. The `Fast Checks` job compares
+each baseline with the one in the base commit the pull request was merged
+with, and fails when an entry was raised or added, or a group of copies was
+listed that the base does not allow. It also checks the files against the
+baselines the sync would write from that base, so an entry the sync has not
+lowered yet cannot let its file grow back, and a removed copy's group cannot
+take a new one.
+
+`tests/src/unit/test_duplicate_code_ratchet.py` fails when a Python function
+or class has the same code as another one: the same after docstrings,
+decorators, type hints and names are dropped, with at least two statements.
+Import the existing definition instead of copying it. Closures are not
+compared on their own, and a file with the same bytes as another counts once,
+because that is how the server and the component share code
+(`dashboard_patch.py`); such a file needs a test that the copies match.
+Copies that already existed are listed in
+`tests/src/unit/duplicate_code_baseline.json`. Removing, moving or editing a
+listed copy passes without a baseline edit; the post-merge sync rewrites it.
+`python scripts/duplicate_code_ratchet.py` refuses to write the baseline while
+a group has a new copy, so it cannot accept one.
+
+`BLE001` (a handler that catches `Exception` without re-raising it or logging
+its traceback) is enabled. Each handler that existed before carries
+`# noqa: BLE001`. Do not add that comment to a new handler: catch the specific
+exception, re-raise, or log with `logger.exception(...)` or `exc_info=True`.
+One case may add it: a tool-boundary handler that ends in
+`exception_to_structured_error(exc, ...)` or
+`raise_tool_error(create_error_response(...))`. Those calls raise a
+`ToolError` for the agent, which ruff cannot see. With `raise_error=False`,
+`exception_to_structured_error` returns the payload instead and the handler
+needs a real fix.
+Logging only the message does not satisfy the rule. `RUF100` fails a `noqa`
+that is no longer needed. The two webhook-proxy `start.py` files are exempt
+through `per-file-ignores` in `pyproject.toml` and carry no `noqa`.
+
+`PLR0915` caps a function at 50 statements. Functions that were already longer
+carry `# noqa: PLR0915` on their `def` line. Do not add that comment to a new
+function: extract helpers. `RUF100` fails the `noqa` once the function is short
+enough.
+
+## Docker
+
+Stdio mode is local to the process and does not expose a network port:
+
+```bash
+docker run --rm -i \
+  -e HOMEASSISTANT_URL=... -e HOMEASSISTANT_TOKEN=... \
+  ghcr.io/homeassistant-ai/ha-mcp:latest
+```
+
+For a same-host HTTP client, bind only loopback:
+
+```bash
+docker run -d -p 127.0.0.1:8086:8086 \
+  -e HOMEASSISTANT_URL=... -e HOMEASSISTANT_TOKEN=... \
+  ghcr.io/homeassistant-ai/ha-mcp:latest ha-mcp-web
+```
+Connect a same-host client to `http://127.0.0.1:8086/mcp`; the default
+`MCP_SECRET_PATH` supplies that `/mcp` suffix.
+
+A LAN-reachable listener needs an unguessable MCP path configured in both the
+server and client:
+
+```bash
+MCP_SECRET="/private_$(python3 -c 'import secrets; print(secrets.token_urlsafe(16))')"
+echo "MCP_SECRET_PATH=$MCP_SECRET"
+docker run -d -p 8086:8086 \
+  -e HOMEASSISTANT_URL=... -e HOMEASSISTANT_TOKEN=... \
+  -e MCP_SECRET_PATH="$MCP_SECRET" \
+  ghcr.io/homeassistant-ai/ha-mcp:latest ha-mcp-web
+```
+
+Read [`SECURITY.md`](../../SECURITY.md) before changing authentication,
+network binding, ingress, or proxy behavior.
+
+## Architecture
+
+The stable architectural map is:
+
+```text
+src/ha_mcp/
+├── server.py                    FastMCP server and lifecycle
+├── server_instructions.py       Initialize instructions: skills, notices, owner text
+├── __main__.py                  CLI and transport entrypoints
+├── config.py                    Settings singleton, embedded connection, re-exports
+├── config_settings.py           Settings model and .env loading; one declaration per setting
+├── config_meta.py               Setting metadata: UI surface, app option, range, restart
+├── config_registry.py           Registries and bounds derived from the metadata
+├── config_overrides.py          Feature-flag and advanced override loader
+├── config_backup.py             Auto-backup override loader
+├── errors.py                    Structured error contract
+├── client/                      REST and WebSocket clients
+├── auth/                        OAuth provider and consent UI
+├── tools/
+│   ├── registry.py              Lazy tool discovery
+│   ├── tools_*.py               Domain tool modules
+│   ├── smart_search/            Search service layer
+│   ├── device_control.py        Verified device control
+│   ├── ws_waiters.py            WebSocket-event-driven wait helpers
+│   ├── config_write_helpers.py  Helpers shared by the config set tools
+│   ├── diagnostics_helpers.py   Integration diagnostics fetch and pagination
+│   ├── coercion.py              Tool parameter coercion and parsing
+│   ├── response_helpers.py      Response projection, pagination, timestamps
+│   └── util_helpers.py          Shared tool utilities
+├── settings_ui/                 Web settings interface
+├── transforms/                  Shared tool categorization/transforms
+├── utils/                       Data paths, sandboxing, hashing, telemetry
+└── resources/                   Bundled runtime resources
+```
+
+Use the live tree for filenames and counts; this map describes responsibilities,
+not an exhaustive inventory.
+Concrete owners worth preserving in the map are
+`client/websocket_listener.py`, `tools/best_practice_checker.py`,
+`utils/fuzzy_search.py`, `utils/operation_manager.py`,
+`utils/skill_loader.py`, `utils/python_sandbox.py`, and
+`utils/kill_signal_diagnostics.py`.
+`utils/config_hash.py` is the shared optimistic-locking implementation for
+automation, script, scene, dashboard, and energy configuration.
+
+Registry label updates follow the shared [concurrency strategy](../registry-label-concurrency.md).
+
+Key patterns:
+
+- The registry discovers `tools_*.py` modules and `register_*_tools()`
+  functions; adding a module needs no manual central registration.
+- Server, client, and tools initialize lazily.
+- Shared business logic belongs in service modules such as `smart_search/`
+  and `device_control.py`, not duplicated across tool wrappers.
+- State-changing device operations verify the result through WebSocket state.
+- Tools wait for logical completion when a completion signal exists.
+
+The canonical MCP coding rules are in
+[`.gemini/styleguide.md`](../../.gemini/styleguide.md).
+
+## Terminology: apps, not add-ons
+
+Home Assistant 2026.2 renamed add-ons to apps. In user- or agent-facing text,
+write **app (add-on)** on first mention and **app** afterwards. Do not use the
+retired term alone.
+
+Identifiers are not automatically exempt. Check the current upstream contract:
+
+- The current container prefix is `app_`; `addon_` remains a legacy fallback.
+  `tests/src/haos_runtime.py` discovers the live name from Docker instead of
+  assuming either prefix.
+- The established REST surface remains under `/addons/...`.
+- `/v2/apps` is mounted only when the `supervisor_v2_api` feature flag is
+  enabled. It was added in 2026-04 with v1 retained for compatibility, is
+  absent from older/default Supervisors, and returns `apps` where v1 returns
+  `addons`.
+- The developer documentation redirects from `/docs/add-ons` to `/docs/apps`.
+
+Old spelling remains correct for app slugs, the `addon` issue label,
+`homeassistant-addon*/` paths, the internal `deployment_mode="addon"`
+value, and literal historical UI labels in compatibility notes.
+
+## API research
+
+Search Home Assistant Core without cloning the 500 MB+ repository. Use
+`gh search code` or the contents API:
+
+```bash
+gh search code "use_blueprint" --repo home-assistant/core \
+  path:tests --json path --limit 10
+
+gh api /repos/home-assistant/core/contents/homeassistant/components/automation/config.py \
+  --jq '.content' | base64 -d
+```
+
+Record the upstream revision when a conclusion is version-sensitive.

@@ -1,0 +1,114 @@
+name: Update Add-on Config Version
+jobs:
+  update-addon-config:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - name: Generate GitHub App token
+      id: app-token
+      uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510
+      with:
+        app-id: ${{ secrets.RELEASE_APP_ID }}
+        private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+        permission-contents: write
+      continue-on-error: true
+      if: ${{ github.repository == 'homeassistant-ai/ha-mcp' }}
+    - name: Determine push token
+      id: token
+      run: 'echo "value=$QA_PUSH_TOKEN" >> "$GITHUB_OUTPUT"
+
+        echo "source=qa-unprotected-repository" >> "$GITHUB_OUTPUT"
+
+        '
+      env:
+        QA_PUSH_TOKEN: ${{ github.token }}
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: master
+        fetch-depth: 1
+        persist-credentials: false
+    - name: Update config.yaml with release version
+      env:
+        PUSH_TOKEN: ${{ steps.token.outputs.value }}
+      run: "VERSION=\"${{ inputs.version }}\"\necho \"Updating addon config.yaml to version $VERSION (using token: ${{ steps.token.outputs.source\
+        \ }})\"\n\nCONFIG_PATH=\"${{ inputs.config_path }}\"\nyq -i \".version = \\\"$VERSION\\\"\" \"$CONFIG_PATH\"\n\ngit\
+        \ config user.name \"github-actions[bot]\"\ngit config user.email \"github-actions[bot]@users.noreply.github.com\"\
+        \ngit add \"$CONFIG_PATH\"\n\n# Only commit if there are changes\nif git diff --staged --quiet; then\n  echo \"No\
+        \ changes to config.yaml, skipping commit\"\nelse\n  git commit -m \"chore(addon): ${{ inputs.commit_message_prefix\
+        \ }} $VERSION [skip ci]\"\n  # Master can advance between this job's checkout and its push\n  # (bot commits from\
+        \ other workflows); retry with a rebase instead\n  # of failing the publish. Mirrors the loop in sync-tool-docs.yml.\n\
+        \  for attempt in 1 2 3 4 5; do\n    if git push \"https://x-access-token:${PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git\"\
+        \ HEAD:master; then\n      echo \"\u2713 Updated addon config.yaml to $VERSION (attempt ${attempt})\"\n      exit\
+        \ 0\n    fi\n    echo \"Push rejected on attempt ${attempt}; rebasing onto origin/master and retrying.\"\n    # Abort\
+        \ a conflicted rebase so later attempts fail for the real reason.\n    git pull --rebase origin master || {\n    \
+        \  git rebase --abort 2>/dev/null || true\n      echo \"::error::Rebase onto origin/master failed; aborting retries.\"\
+        \n      exit 1\n    }\n  done\n  echo \"::error::Could not push addon config.yaml update after 5 attempts.\"\n  exit\
+        \ 1\nfi\n"
+    if: ${{ vars.QA_ARMED == 'true' && github.sha != vars.QA_BOOTSTRAP_SHA && (true) }}
+  qa_receipt:
+    name: QA workflow receipt
+    needs:
+    - update-addon-config
+    if: ${{ always() && vars.QA_ARMED == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        ref: ${{ github.workflow_sha }}
+    - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
+      with:
+        version: 0.13.4
+    - run: uv run -s .qa/runtime.py receipt
+      env:
+        QA_NEEDS: ${{ toJSON(needs) }}
+        QA_STAGE: ${{ vars.QA_STAGE }}
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: qa-workflow-receipt
+        path: qa-workflow-receipt.json
+        retention-days: 30
+'on':
+  workflow_call:
+    inputs:
+      version:
+        description: Version to set in config.yaml (without v prefix)
+        required: true
+        type: string
+      config_path:
+        description: Path to config.yaml to update
+        required: false
+        type: string
+        default: homeassistant-addon/config.yaml
+      commit_message_prefix:
+        description: Prefix for commit message (e.g., "publish dev addon version")
+        required: false
+        type: string
+        default: publish version
+    secrets:
+      RELEASE_APP_ID:
+        required: false
+      RELEASE_APP_PRIVATE_KEY:
+        required: false
+      RELEASE_TOKEN:
+        required: false
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to set in config.yaml (without v prefix). The ghcr addon images for this version MUST already
+          exist.
+        required: true
+        type: string
+      config_path:
+        description: Path to config.yaml to update
+        required: false
+        type: string
+        default: homeassistant-addon/config.yaml
+      commit_message_prefix:
+        description: Prefix for commit message
+        required: false
+        type: string
+        default: publish version

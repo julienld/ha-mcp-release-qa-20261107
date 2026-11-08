@@ -1,0 +1,251 @@
+name: Publish Dev Channel
+env:
+  REGISTRY: ghcr.io
+permissions:
+  contents: read
+jobs:
+  check-skip:
+    if: ${{ vars.QA_ARMED == 'true' && github.sha != vars.QA_BOOTSTRAP_SHA && (github.repository == 'julienld/ha-mcp-release-qa-20261107')
+      }}
+    runs-on: ubuntu-latest
+    outputs:
+      should_skip: ${{ steps.check.outputs.should_skip }}
+    steps:
+    - name: Check if should skip
+      id: check
+      env:
+        COMMIT_MSG: ${{ github.event.head_commit.message }}
+      run: "if [[ \"$COMMIT_MSG\" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+ ]] || [[ \"$COMMIT_MSG\" =~ \"chore(release)\" ]]; then\n \
+        \ echo \"should_skip=true\" >> $GITHUB_OUTPUT\n  echo \"Skipping dev publish for release commit\"\nelse\n  echo \"\
+        should_skip=false\" >> $GITHUB_OUTPUT\nfi\n"
+  prepare:
+    needs: check-skip
+    if: needs.check-skip.outputs.should_skip != 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      dev_version: ${{ steps.version.outputs.dev_version }}
+      short_sha: ${{ steps.version.outputs.short_sha }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        fetch-depth: 0
+    - name: Install uv
+      uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
+      with:
+        version: 0.13.4
+    - name: Generate dev version
+      id: version
+      run: 'SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+
+        # <next release>.dev<commit count>: the same commit produces the
+
+        # SAME number in every workflow (PyPI/Docker here, the dev app), so
+
+        # all surfaces report one dev version. See the script for why the
+
+        # base is the NEXT release and which commit it counts.
+
+        DEV_VERSION=$(scripts/dev_version.sh)
+
+
+        echo "dev_version=$DEV_VERSION" >> "$GITHUB_OUTPUT"
+
+        echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
+
+        echo "Dev version: $DEV_VERSION (sha: $SHORT_SHA)"
+
+        echo "$DEV_VERSION" > dev-version.txt
+
+        '
+    - name: Hand the dev version to the mirror sync
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: dev-version
+        path: dev-version.txt
+        retention-days: 7
+  publish-pypi-dev:
+    name: Publish PyPI (dev channel)
+    needs: prepare
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi-dev
+      url: https://julienld.github.io/ha-mcp-mirror-qa-20261107
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      DEV_VERSION: ${{ needs.prepare.outputs.dev_version }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        submodules: true
+    - name: Install uv
+      uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
+      with:
+        version: 0.13.4
+    - name: Temporarily set package name and version for dev build
+      run: '# Replace package name and version in pyproject.toml for build only
+
+        sed -i ''s/^name = "ha-mcp"/name = "ha-mcp-dev"/'' pyproject.toml
+
+        sed -i ''s/^version = .*/version = "''"$DEV_VERSION"''"/'' pyproject.toml
+
+        # Replace package name in version lookup
+
+        sed -i "s/version(''ha-mcp'')/version(''ha-mcp-dev'')/g" src/ha_mcp/__main__.py
+
+        # Add ha-mcp-dev entry point with DEBUG logging
+
+        sed -i ''/^ha-mcp = "ha_mcp.__main__:main"$/a ha-mcp-dev = "ha_mcp.__main__:main_dev"'' pyproject.toml
+
+        echo "Building ha-mcp-dev version: $DEV_VERSION"
+
+        grep -E ''^(name|version) = '' pyproject.toml
+
+        echo "Entry points:"
+
+        grep -A5 ''^\[project.scripts\]'' pyproject.toml
+
+        '
+    - name: Build distribution
+      run: uv build
+    - name: Publish package to the isolated QA index
+      run: uv run -s .qa/runtime.py publish-index --dist dist
+      env:
+        QA_DEPLOY_KEY: ${{ secrets.INTEGRATION_MIRROR_DEPLOY_KEY }}
+  publish-docker-dev:
+    name: Publish Docker (dev channel)
+    needs: prepare
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        submodules: true
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
+    - name: Log in to GitHub Container Registry
+      uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    - name: Build and push Docker image (dev tags)
+      uses: ./.github/actions/docker-build-python-base-fallback
+      with:
+        context: .
+        file: ./Dockerfile
+        push: true
+        tags: '${{ env.REGISTRY }}/${{ github.repository }}:dev
+
+          ${{ env.REGISTRY }}/${{ github.repository }}:dev-${{ needs.prepare.outputs.short_sha }}
+
+          '
+        platforms: linux/amd64
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        build-args: 'BUILD_VERSION=${{ needs.prepare.outputs.dev_version }}
+
+          '
+  create-prerelease:
+    name: Create GitHub pre-release
+    needs:
+    - prepare
+    - publish-pypi-dev
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        fetch-depth: 0
+        fetch-tags: true
+    - name: Wait for the build on PyPI
+      env:
+        VERSION: ${{ needs.prepare.outputs.dev_version }}
+      run: "for _ in $(seq 1 60); do\n  if curl -fsS -o /dev/null \"https://julienld.github.io/ha-mcp-mirror-qa-20261107/pypi/ha-mcp-dev/${VERSION}/json\"\
+        ; then\n    echo \"PyPI serves ha-mcp-dev ${VERSION}\"\n    exit 0\n  fi\n  sleep 30\ndone\necho \"::error::PyPI never\
+        \ served ha-mcp-dev ${VERSION}; not tagging a component that pins it.\"\nexit 1\n"
+    - name: Stamp the component for this build
+      env:
+        VERSION: ${{ needs.prepare.outputs.dev_version }}
+      run: "git config user.name \"github-actions[bot]\"\ngit config user.email \"41898282+github-actions[bot]@users.noreply.github.com\"\
+        \npython3 scripts/stamp_component_version.py \\\n  --component-dir custom_components/ha_mcp_tools \\\n  --version\
+        \ \"${VERSION%.dev*}\" --pin \"$VERSION\" --dist ha-mcp-dev\ngit commit --quiet -am \"chore(internal): stamp the component\
+        \ for dev build ${VERSION} [skip ci]\"\n"
+    - name: Create pre-release
+      env:
+        GH_TOKEN: ${{ github.token }}
+        VERSION: ${{ needs.prepare.outputs.dev_version }}
+        SHORT_SHA: ${{ needs.prepare.outputs.short_sha }}
+      run: "TAG=\"v${VERSION}\"\n\n# One line per pull request merged since the previous dev build,\n# then the other ways\
+        \ to install this build.\npython3 scripts/build_mirror_release_notes.py \\\n  --dev-pin \"$VERSION\" --dist ha-mcp-dev\
+        \ \\\n  --source \"$GITHUB_SHA\" --source-label \"${GITHUB_REPOSITORY}@${SHORT_SHA}\" \\\n  --out release_notes.md\n\
+        cat >> release_notes.md << EOF\n\n### Other installs\n\n**Docker (dev channel):** \\`docker pull ghcr.io/${GITHUB_REPOSITORY}:dev\\\
+        `\n\n**PyPI (dev channel):** \\`pip install ha-mcp-dev\\`\nEOF\n\n# Delete old pre-release with same tag if exists\n\
+        gh release delete \"$TAG\" --yes 2>/dev/null || true\ngh api -X DELETE \"repos/${GITHUB_REPOSITORY}/git/refs/tags/$TAG\"\
+        \ 2>/dev/null || true\n\n# Forced both ways: a re-run holds this tag from the checkout's\n# fetch, and the remote\
+        \ one stays if its deletion above failed.\ngit tag -f \"$TAG\" HEAD\ngit push --quiet --force \"https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git\"\
+        \ \"refs/tags/$TAG\"\ngh release create \"$TAG\" \\\n  --verify-tag \\\n  --title \"Dev Build $VERSION\" \\\n  --notes-file\
+        \ release_notes.md \\\n  --prerelease\n\necho \"\u2713 Created pre-release $TAG\"\n"
+  cleanup-old-prereleases:
+    name: Cleanup old pre-releases
+    needs: create-prerelease
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - name: Delete old dev releases (keep last 5)
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: "# Get all pre-releases with .dev in the tag, sorted by date\n# gh release list output is tab-separated: TITLE<tab>TYPE<tab>TAG<tab>DATE\n\
+        gh release list --repo ${{ github.repository }} --limit 100 \\\n  | grep -E \"\\.dev[0-9]+\" \\\n  | tail -n +6 \\\
+        \n  | awk -F'\\t' '{print $3}' \\\n  | while read tag; do\n      if [ -n \"$tag\" ]; then\n        echo \"Deleting\
+        \ old dev release: $tag\"\n        gh release delete \"$tag\" --yes --repo ${{ github.repository }} || true\n    \
+        \    gh api -X DELETE \"repos/${GITHUB_REPOSITORY}/git/refs/tags/$tag\" 2>/dev/null || true\n      fi\n    done\n"
+  qa_receipt:
+    name: QA workflow receipt
+    needs:
+    - check-skip
+    - prepare
+    - publish-pypi-dev
+    - publish-docker-dev
+    - create-prerelease
+    - cleanup-old-prereleases
+    if: ${{ always() && vars.QA_ARMED == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        ref: ${{ github.workflow_sha }}
+    - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
+      with:
+        version: 0.13.4
+    - run: uv run -s .qa/runtime.py receipt
+      env:
+        QA_NEEDS: ${{ toJSON(needs) }}
+        QA_STAGE: ${{ vars.QA_STAGE }}
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: qa-workflow-receipt
+        path: qa-workflow-receipt.json
+        retention-days: 30
+'on':
+  push:
+    branches:
+    - master
+    paths-ignore:
+    - '*.md'
+    - docs/**
+    - .github/workflows/close-inactive-issues.yml
+  workflow_dispatch: null

@@ -1,0 +1,51 @@
+name: QA Verify Release Chain
+'on':
+  workflow_run:
+    workflows:
+    - Sync Integration Mirror
+    types:
+    - completed
+    branches:
+    - master
+  workflow_dispatch: {}
+permissions:
+  contents: read
+  actions: read
+  statuses: write
+  pull-requests: write
+jobs:
+  verify:
+    if: ${{ vars.QA_ARMED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      QA_STAGE: ${{ vars.QA_STAGE }}
+      QA_OBSERVER_PR: ${{ vars.QA_OBSERVER_PR }}
+      QA_OBSERVER_SHA: ${{ vars.QA_OBSERVER_SHA }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        fetch-depth: 0
+    - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
+      with:
+        version: 0.13.4
+    - name: Download receipt of the real synchronization workflow
+      run: gh run download "$PARENT_RUN" --repo "$GITHUB_REPOSITORY" --name qa-workflow-receipt --dir parent
+      env:
+        PARENT_RUN: ${{ github.event.workflow_run.id }}
+    - name: Verify real source/mirror release and deployed site
+      id: proof
+      run: uv run -s .qa/runtime.py verify-chain
+    - name: Report exact observed chain to the QA observer
+      if: ${{ always() }}
+      run: uv run -s .qa/runtime.py report
+      env:
+        QA_VERIFY_OUTCOME: ${{ steps.proof.outcome }}
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      if: ${{ always() }}
+      with:
+        name: qa-chain-result
+        path: qa-chain-result.json
+        retention-days: 30

@@ -1,0 +1,100 @@
+name: Deploy to GitHub Pages
+permissions: {}
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  build:
+    if: ${{ vars.QA_ARMED == 'true' && github.sha != vars.QA_BOOTSTRAP_SHA && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion
+      == 'success') }}
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./site
+    steps:
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ inputs.ref || 'stable' }}
+    - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
+      with:
+        version: 0.13.4
+    - name: Generate star history charts
+      env:
+        GITHUB_TOKEN: ${{ secrets.STAR_HISTORY_TOKEN }}
+      run: python3 ../scripts/generate_star_history.py --repository "${{ github.repository }}" --output-dir public/star-history
+    - name: Setup Node
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+      with:
+        node-version: '22'
+        cache: npm
+        cache-dependency-path: site/package-lock.json
+    - name: Install dependencies
+      run: corepack npm ci
+    - name: Build with Astro
+      run: npm run build
+    - name: Record actual deployed QA release
+      run: uv run -s ../.qa/runtime.py site-marker
+    - name: Upload artifact
+      uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9
+      with:
+        path: ./site/dist
+  deploy:
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+    - name: Deploy to GitHub Pages
+      id: deployment
+      uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346
+  qa_receipt:
+    name: QA workflow receipt
+    needs:
+    - build
+    - deploy
+    if: ${{ always() && vars.QA_ARMED == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        ref: ${{ github.workflow_sha }}
+    - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
+      with:
+        version: 0.13.4
+    - run: uv run -s .qa/runtime.py receipt
+      env:
+        QA_NEEDS: ${{ toJSON(needs) }}
+        QA_STAGE: ${{ vars.QA_STAGE }}
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: qa-workflow-receipt
+        path: qa-workflow-receipt.json
+        retention-days: 30
+'on':
+  workflow_run:
+    workflows:
+    - SemVer Release
+    types:
+    - completed
+  push:
+    branches:
+    - master
+    paths:
+    - .github/workflows/deploy.yml
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Tag or commit to build the site from (default: the stable tag)'
+        required: false
+        default: stable
+        type: string

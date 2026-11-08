@@ -1,0 +1,209 @@
+---
+# GENERATED FILE — do not edit. Translations live in
+# src/ha_mcp/settings_ui/locales/it.json (keys addon.*, features.*, advanced.*,
+# backup.fields.*, addon_stable.*); regenerate with: python scripts/generate_locales.py
+configuration:
+  verify_ssl:
+    name: Verifica i certificati TLS
+    description: 'Verifica il certificato TLS del server Home Assistant. Disattiva
+      questa opzione solo su una rete affidabile, per un certificato autofirmato o
+      una mancata corrispondenza del nome host: indebolisce la sicurezza del trasporto.'
+  ha_tool_concurrency:
+    name: Concorrenza degli strumenti di Home Assistant
+    description: Limite opzionale sulle chiamate esterne agli strumenti di Home Assistant
+      in tutte le sessioni. La concorrenza interna di REST, WebSocket e di distribuzione
+      per singolo strumento rimane invariata. 0 mantiene il comportamento illimitato.
+      Una chiamata in attesa di capacità fallisce dopo 60 secondi. Intervallo 0–32.
+  custom_instructions:
+    name: Istruzioni personalizzate del server
+    description: Testo inviato a ogni assistente IA che si connette, come parte delle
+      istruzioni del server MCP — ad esempio dove sono conservate le note della casa
+      e quando leggerle o aggiornarle. Fa anche parte del prompt degli agenti di conversazione
+      di Home Assistant (Assist) che utilizzano questo set di strumenti. Usalo per
+      indicazioni che devono raggiungere tutti i client in una volta sola; tienilo
+      breve e privo di segreti. Lascia vuoto per non aggiungere nulla. Richiede il
+      riavvio; i client vedono la modifica quando si riconnettono.
+  enable_tool_search:
+    name: Attiva la ricerca degli strumenti
+    description: 'Sostituisci il catalogo completo degli strumenti con la scoperta
+      basata sulla ricerca. Riduce il contesto inattivo di circa il 90%, a circa 5K
+      token. ⚠️ NON abilitare questa opzione nei client con ricerca di strumenti integrata
+      / strumenti differiti (claude.ai, Claude Desktop, Claude Code) — i due livelli
+      di ricerca entrano in conflitto e la ricerca di strumenti integrata del client
+      è la scelta migliore in quel caso; lasciala disattivata. Se gli strumenti siano
+      differiti dipende dalla combinazione di client e modello: usalo quando la tua
+      configurazione carica l''intero catalogo in anticipo — modelli senza strumenti
+      differiti nativi (es. Gemini, modelli locali compatibili con OpenAI, Claude
+      Haiku), client che inseriscono tutti gli schemi di strumenti indipendentemente
+      dal modello (es. GitHub Copilot CLI), o finestre di contesto più piccole. Alcuni
+      modelli Codex e ChatGPT includono anch''essi strumenti differiti — verifica
+      direttamente il tuo client/modello per confermare le sue funzionalità in modo
+      da non lasciare questa opzione abilitata inutilmente. Gli strumenti vengono
+      trovati tramite ha_search_tools ed eseguiti tramite proxy categorizzati (lettura/scrittura/eliminazione).
+      Richiede il riavvio dell''app (componente aggiuntivo) per avere effetto — quindi
+      riconnettiti o aggiorna il server MCP nel tuo client di IA in modo che ricarichi
+      l''elenco degli strumenti. Il solo riavvio dell''app (componente aggiuntivo)
+      NON aggiorna l''elenco degli strumenti memorizzato nella cache di un client;
+      questo si applica dopo aver modificato qualsiasi impostazione qui.'
+  tool_search_max_results:
+    name: Numero massimo di risultati della ricerca degli strumenti
+    description: Numero massimo di strumenti nascosti restituiti per ogni chiamata
+      ha_search_tools quando la ricerca degli strumenti è abilitata; uno strumento
+      aggiunto ai preferiti che rientra in tale conteggio massimo viene inserito come
+      voce breve basata solo sul nome in cima ad esso. Valori più bassi (2-3) risparmiano
+      token di contesto ma potrebbero perdere strumenti rilevanti. Richiede il riavvio.
+      Intervallo 2–10.
+  enable_tool_security_policies:
+    name: Attiva i criteri di sicurezza degli strumenti (avanzato)
+    description: Subordina all'approvazione dell'utente le chiamate agli strumenti
+      ad alto rischio (controllo di serrature e allarmi, scrittura di automazioni,
+      ecc.). Quando viene chiamato uno strumento controllato, l'agente chiede all'utente
+      di aprire la scheda Criteri di sicurezza degli strumenti nell'interfaccia web
+      e di fare clic su Approva prima che la chiamata prosegua. Le regole per singolo
+      strumento, con condizioni facoltative sugli argomenti, si configurano nella
+      scheda Criteri di sicurezza degli strumenti. Disattivato per impostazione predefinita.
+      Richiede il riavvio per avere effetto.
+  enable_security_policy_tool:
+    name: Consenti agli agenti IA di modificare le policy di sicurezza degli strumenti
+    description: 'Registra lo strumento ha_manage_security_policy, che consente agli
+      agenti IA connessi di leggere e riscrivere le policy di sicurezza degli strumenti
+      — inclusa la rimozione dei gate di approvazione. Disattivato per impostazione
+      predefinita. Indipendente dall''opzione Policy di Sicurezza degli Strumenti
+      sopra: questo controlla chi può modificare le regole, non se vengono applicate.
+      Lo strumento non può vedere o decidere le approvazioni in sospeso. Per mantenere
+      un essere umano nel ciclo, proteggi lo strumento prima di abilitarlo: attiva
+      "protetto da sicurezza" per Gestisci Policy di Sicurezza nella scheda Strumenti
+      dell''interfaccia web. Richiede un riavvio per avere effetto.'
+  read_only_mode:
+    name: Modalità di sola lettura
+    description: Disattiva tutti gli strumenti di scrittura e rimuove la capacità
+      degli strumenti di effettuare chiamate di scrittura o distruttive. Gli strumenti
+      misti di lettura/scrittura — backup, applicazioni (add-on), preferenze energetiche,
+      pipeline vocali e la modalità codice quando abilitata — rimangono disponibili
+      con le loro operazioni di scrittura bloccate. Stesso interruttore della scheda
+      Tools dell'interfaccia web. Disattivato per impostazione predefinita. Richiede
+      il riavvio per avere effetto.
+  redact_secrets:
+    name: Rimuovi Segreti
+    description: Rimuove i dati sensibili dalle risposte degli strumenti prima che
+      raggiungano l'assistente IA. Le opzioni dell'app (add-on) e i campi di integrazione
+      contrassegnati come password vengono sostituiti con un indicatore di impostato/vuoto
+      (in modo che sia comunque possibile rispondere a "questa credenziale è configurata?"),
+      e le altre risposte degli strumenti vengono ripulite dai valori segreti che
+      il server ha già visto (i valori più corti di 6 caratteri vengono ignorati,
+      poiché la sostituzione di frammenti minuscoli corromperebbe output non correlati).
+      Altri campi non vengono rilevati, ad eccezione delle chiavi private nelle opzioni
+      dell'app e dei nomi di opzione dell'app elencati di seguito. Disattivato per
+      impostazione predefinita.
+  redact_app_option_keys:
+    name: Chiavi opzione app extra da oscurare
+    description: Nomi di opzioni dell'app (add-on) da oscurare come i campi password,
+      per le app il cui schema memorizza un segreto come testo in chiaro (ad esempio
+      backup_password). Separa i nomi con virgole o nuove righe. Un nome si applica
+      a ogni app; scrivi app_slug:name per limitarlo a una singola app. Denominare
+      un gruppo di opzioni copre ogni opzione al suo interno. Utilizzato solo quando
+      l'opzione Rimuovi dati sensibili è attiva. Vuoto per impostazione predefinita.
+  ipv6_allowed_networks:
+    name: Reti IPv6 extra consentite
+    description: 'I client IPv6 raggiungono la porta di questo server solo dalla rete
+      locale: loopback, link-local, unique local (fc00::/7) e le reti a cui l''host
+      di Home Assistant è direttamente connesso. L''IPv4 non è interessato. Elenca
+      altre reti IPv6 da consentire, separate da virgole o nuove righe (ad esempio
+      2001:db8:5::/48). L''aggiunta di ::/0 consente qualsiasi client IPv6, anche
+      da Internet se il tuo router lascia passare il traffico IPv6 in ingresso.'
+  enable_mandatory_bps:
+    name: Allega le skill di buone pratiche alle scritture
+    description: 'Interruttore principale della funzione che consegna il contenuto
+      delle skill agli strumenti di scrittura (issue #1182). Quando è attivo (impostazione
+      predefinita), i sei strumenti di scrittura della configurazione (automazioni,
+      script, scene, helper, dashboard, YAML grezzo) allegano i file di riferimento
+      canonici sulle buone pratiche di Home Assistant sotto `skill_content` a ogni
+      scrittura riuscita e incorporano automaticamente le sezioni di riferimento citate
+      dagli avvisi sulle buone pratiche. Ogni strumento espone inoltre un parametro
+      `MandatoryBPS` per singola chiamata, che l''agente può impostare su false nelle
+      chiamate successive una volta ottenuti i contenuti. Quando questo interruttore
+      principale è disattivo NON viene inviato alcun skill_content, a prescindere
+      dal parametro per singola chiamata o dagli avvisi sulle buone pratiche. Si consiglia
+      di lasciarlo attivo come prima scelta; disattivalo solo per modelli con finestre
+      di contesto molto piccole. Disattivarlo può peggiorare l''accuratezza delle
+      scritture. Richiede il riavvio per avere effetto.'
+  enable_strict_mandatory_bps:
+    name: Modalità rigorosa per le buone pratiche
+    description: 'Modalità rigorosa: impedisce al client di usare lo strumento finché
+      non è in grado di dimostrare di aver letto le buone pratiche. Mentre è attiva,
+      i sei strumenti di scrittura soggetti alle buone pratiche (automazioni, script,
+      scene, helper, dashboard, YAML grezzo) sono bloccati e restituiscono un errore
+      che invita il client a leggere la skill sulle buone pratiche tramite ha_get_skill_guide
+      e a restituire la chiave di conferma che ottiene lì. Mentre è attiva, lo strumento
+      ha_get_skill_guide resta forzatamente abilitato: è l''unico a pubblicare la
+      chiave di conferma. È figlia dell''opzione «Allega le skill di buone pratiche
+      alle scritture» qui sopra e resta inerte finché quella è disattivata. Richiede
+      il riavvio per avere effetto.'
+  enable_auto_backup:
+    name: Backup automatico delle modifiche
+    description: Salva un'istantanea di un'entità prima che ogni chiamata a uno strumento
+      di scrittura o eliminazione la modifichi. Finché questa opzione è disattivata,
+      gli strumenti per file e YAML grezzo (ha_write_file, ha_delete_file, ha_config_set_yaml)
+      si rifiutano di scrivere.
+  auto_backup_throttle_minutes:
+    name: Frequenza massima di limitazione del backup automatico (minuti)
+    description: Con quale frequenza il backup automatico può catturare la stessa
+      entità. 0 effettua la cattura a ogni scrittura; un valore N superiore a 0 cattura
+      al massimo un'istantanea ogni N minuti per entità. Intervallo 0–1440.
+  auto_backup_retain_per_entity:
+    name: Conservazione dei backup automatici (per entità)
+    description: Il numero massimo di istantanee conservate per entità. Ogni nuova
+      cattura rimuove le istantanee più vecchie che superano questo numero. Intervallo
+      1–10000.
+  enable_snapshot_actions:
+    name: Consenti azioni sui backup completi di HA
+    description: Consente agli assistenti IA di gestire istantanee complete di Home
+      Assistant tramite ha_manage_backup e i servizi e comandi di backup equivalenti
+      in ha_call_service. Disattivare questa opzione blocca qualsiasi azione di istantanea,
+      inclusa la visualizzazione dell'elenco. L'eliminazione delle istantanee è disponibile
+      solo tramite ha_manage_backup e richiede anche Consenti l'eliminazione delle
+      istantanee. La modifica dei backup e le azioni di backup eseguite da una persona
+      nell'interfaccia utente delle impostazioni web rimangono disponibili.
+  backup_read_only:
+    name: Rendi la gestione dei backup di sola lettura
+    description: Consente agli assistenti IA di elencare, visualizzare e confrontare
+      i backup delle modifiche e di elencare le istantanee complete di HA quando le
+      azioni sulle istantanee sono abilitate. Blocca la creazione, il ripristino (inclusi
+      i ripristini delle modifiche) e l'eliminazione manuale dei backup, inclusi i
+      servizi e i comandi di backup equivalenti in ha_call_service. I backup automatici
+      pre-modifica continuano. Le azioni di backup eseguite da una persona nell'interfaccia
+      utente delle impostazioni web rimangono disponibili.
+  enable_snapshot_delete:
+    name: Consenti l'eliminazione degli snapshot
+    description: Consente a ha_manage_backup di eliminare istantanee complete di Home
+      Assistant. Un'istantanea potrebbe essere l'ultima via d'uscita dopo una modifica
+      errata, quindi una persona deve attivare questa opzione. I backup pianificati,
+      l'istantanea più recente e le istantanee più giovani dell'età minima rimangono
+      protetti.
+  snapshot_delete_min_age_days:
+    name: Età minima dello snapshot per l'eliminazione (giorni)
+    description: L'età minima in giorni che un'istantanea deve avere prima di poter
+      essere eliminata. 0 disattiva il limite di età; l'istantanea più recente e i
+      backup pianificati rimangono protetti. Intervallo 0–365.
+  disabled_tools:
+    name: Strumenti disattivati (separati da virgole)
+    description: 'Gli strumenti elencati qui vengono forzatamente disattivati e bloccati
+      nell''interfaccia web delle impostazioni (scheda Strumenti): non possono essere
+      riattivati lì senza prima togliere questa opzione. Un piccolo insieme di strumenti
+      obbligatori (ha_search, ha_get_overview, ha_get_state, ha_report_issue, ha_manage_backup)
+      non può essere disattivato e continua a funzionare anche se elencato qui. ha_get_skill_guide
+      può essere disattivato solo mentre la modalità rigorosa per le buone pratiche
+      (enable_strict_mandatory_bps) è disattivata. Nomi degli strumenti separati da
+      virgole (per esempio ha_call_event,ha_eval_template).'
+  pinned_tools:
+    name: Strumenti fissati (separati da virgole)
+    description: 'Gli strumenti elencati qui restano fissati in modo bloccato: compaiono
+      in cima alla scheda Strumenti e non possono essere sganciati dall''interfaccia
+      web delle impostazioni senza prima togliere questa opzione. Utile in combinazione
+      con la ricerca degli strumenti. Nomi degli strumenti separati da virgole.'
+  secret_path:
+    name: Percorso segreto personalizzato
+    description: 'Percorso HTTP personalizzato facoltativo per il server MCP. Lascialo
+      vuoto per usare il percorso sicuro generato automaticamente.
+
+      '

@@ -1,0 +1,65 @@
+name: "💡 Feature Request"
+description: "Suggest a new feature or improvement"
+title: "[FEATURE] "
+labels: ["enhancement"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 💡 Suggest a Feature
+
+        Tell us what you'd like to see added to ha-mcp!
+
+  - type: textarea
+    id: feature_description
+    attributes:
+      label: "What would you like to see?"
+      description: "Describe the feature or improvement you want."
+      placeholder: |
+        Example: "Add a tool to manage Home Assistant scenes"
+    validations:
+      required: true
+
+  - type: textarea
+    id: use_case
+    attributes:
+      label: "Why do you need this?"
+      description: "What problem does this solve? What would you use it for?"
+      placeholder: |
+        Example: "I have 10 scenes for different times of day, and I want the AI to activate them based on context without needing to write automations."
+    validations:
+      required: true
+
+  - type: textarea
+    id: report
+    attributes:
+      label: "📋 ha_report_issue Report"
+      description: |
+        **Required.** We prefer that you first ask your AI agent to do what you are looking for, and
+        when it cannot, ask it: *"Request this feature with the ha_report_issue tool."* Its tool
+        calls show what is missing, which helps us find gaps, and sometimes show that ha-mcp can
+        already do it. Paste the whole report it generates here, with tokens and passwords removed.
+
+        Typing `N/A` here is acceptable.
+      placeholder: "Paste the whole ha_report_issue report here, or N/A"
+    validations:
+      required: true
+
+  - type: textarea
+    id: no_report_reason
+    attributes:
+      label: "Why there is no ha_report_issue report"
+      description: |
+        If you typed N/A above, say why there is no report. A short reason, even "N/A", is enough.
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional_context
+    attributes:
+      label: "Additional context"
+      description: "Any other details, examples, or related issues?"
+      placeholder: "Optional: screenshots, examples, links to similar features..."
+    validations:
+      required: false

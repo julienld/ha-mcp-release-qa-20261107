@@ -1,0 +1,64 @@
+name: Release on tag
+permissions:
+  contents: write
+concurrency:
+  group: release-on-tag
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        fetch-depth: 0
+        fetch-tags: true
+    - name: Extract tag message
+      run: "# A lightweight tag has no message of its own \u2014 %(contents) on one\n# falls through to the pointed-to COMMIT's\
+        \ message, so an emptiness\n# check cannot detect it (review finding). Check the tag object's\n# actual type instead:\
+        \ only a real annotated tag (\"tag\" object)\n# carries the generated release notes; anything else gets the stub.\n\
+        if [ \"$(git cat-file -t \"refs/tags/$GITHUB_REF_NAME\")\" = \"tag\" ]; then\n  git tag -l --format='%(contents)'\
+        \ \"$GITHUB_REF_NAME\" > /tmp/notes.md\nelse\n  : > /tmp/notes.md\nfi\nif ! grep -q '[^[:space:]]' /tmp/notes.md;\
+        \ then\n  echo \"Component snapshot synced from homeassistant-ai/ha-mcp.\" > /tmp/notes.md\nfi\n"
+    - name: Create release for tag
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: "VER=\"${GITHUB_REF_NAME#v}\"\n# Check existence explicitly instead of `|| echo \"release exists\"`:\n# that pattern\
+        \ treated EVERY create failure (auth, rate limit, bad\n# notes file) as already-exists and reported green with no\
+        \ release\n# published (review finding). Now only a genuine duplicate no-ops;\n# a real create failure fails the job\
+        \ visibly.\nif gh release view \"$GITHUB_REF_NAME\" --repo \"$GITHUB_REPOSITORY\" >/dev/null 2>&1; then\n  echo \"\
+        release exists\"\n  exit 0\nfi\n# -dev. tags are the dev channel: the prerelease flag is what keeps\n# them away from\
+        \ stable HACS users (HACS filters on it unless the\n# repository's \"Pre-release\" switch entity is on) and out of\n\
+        # GitHub's \"latest\" release.\nPRERELEASE_FLAG=\"\"\ncase \"$GITHUB_REF_NAME\" in\n  *-dev.*) PRERELEASE_FLAG=\"\
+        --prerelease\" ;;\nesac\ngh release create \"$GITHUB_REF_NAME\" --repo \"$GITHUB_REPOSITORY\" \\\n  --title \"$VER\"\
+        \ -F /tmp/notes.md $PRERELEASE_FLAG\n"
+    - name: Retire superseded dev pre-releases
+      if: ${{ !contains(github.ref_name, '-dev.') }}
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: "VER=\"${GITHUB_REF_NAME#v}\"\n# Capture instead of piping into the loop: the default GHA shell\n# has no pipefail,\
+        \ so a failed gh api would otherwise read as\n# \"nothing to retire\" and pass silently.\nTAGS=$(gh api --paginate\
+        \ \"repos/${GITHUB_REPOSITORY}/releases\" \\\n  --jq '.[] | select(.prerelease) | .tag_name')\n# Process every tag,\
+        \ THEN fail if any deletion errored: aborting\n# mid-loop (plain set -e) leaves later tags unprocessed, while\n# `||\
+        \ echo warning` would mask a persistent failure forever - the\n# same anti-pattern the create step's history warns\
+        \ about. A red\n# run here is self-healing (the release is already published and\n# the next stable release re-runs\
+        \ the full scan).\nFAILED=0\nfor TAG in $TAGS; do\n  case \"$TAG\" in *-dev.*) ;; *) continue ;; esac\n  BASE=\"${TAG#v}\"\
+        \n  BASE=\"${BASE%%-dev.*}\"\n  if [ \"$(printf '%s\\n%s\\n' \"$BASE\" \"$VER\" | sort -V | tail -n1)\" = \"$VER\"\
+        \ ]; then\n    echo \"retiring superseded pre-release ${TAG}\"\n    gh release delete \"$TAG\" --repo \"$GITHUB_REPOSITORY\"\
+        \ --yes --cleanup-tag || FAILED=1\n  else\n    echo \"keeping ${TAG} (newer than ${VER})\"\n  fi\ndone\nif [ \"$FAILED\"\
+        \ -ne 0 ]; then\n  echo \"::error::one or more pre-release retirements failed; the next stable release re-runs the\
+        \ scan\"\n  exit 1\nfi\n"
+    - name: Keep the newest five dev pre-releases
+      if: ${{ contains(github.ref_name, '-dev.') }}
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: "TAGS=$(gh api --paginate \"repos/${GITHUB_REPOSITORY}/releases\" \\\n  --jq '.[] | select(.prerelease) | .tag_name')\n\
+        # The listing can miss the release created moments ago, so count\n# this tag explicitly. Newest first by version,\
+        \ so dev.1000 sorts\n# above dev.999.\nOLD=$(printf '%s\\n' \"$GITHUB_REF_NAME\" $TAGS | grep -e '-dev\\.' \\\n  |\
+        \ sort -rV | uniq | tail -n +6)\nFAILED=0\nfor TAG in $OLD; do\n  echo \"pruning old pre-release ${TAG}\"\n  gh release\
+        \ delete \"$TAG\" --repo \"$GITHUB_REPOSITORY\" --yes --cleanup-tag || FAILED=1\ndone\nif [ \"$FAILED\" -ne 0 ]; then\n\
+        \  echo \"::error::one or more pre-release deletions failed; the next dev build re-runs the prune\"\n  exit 1\nfi\n"
+    if: ${{ github.repository == 'julienld/ha-mcp-mirror-qa-20261107' && vars.QA_ARMED == 'true' }}
+'on':
+  push:
+    tags:
+    - v*

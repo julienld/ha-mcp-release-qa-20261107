@@ -1,0 +1,900 @@
+# Home Assistant MCP Server app (add-on)
+
+AI assistant integration for Home Assistant via Model Context Protocol (MCP).
+
+## About
+
+This app enables AI assistants (Claude, ChatGPT, etc.) to control your Home Assistant installation through the Model Context Protocol (MCP). It provides 87+ tools for device control, automation management, entity search, calendars, todo lists, dashboards, backup/restore, history/statistics, camera snapshots, and system queries.
+
+**Key Features:**
+- **Zero Configuration** - Automatically discovers Home Assistant connection
+- **Secure by Default** - Auto-generated secret paths with 128-bit entropy
+- **Fuzzy Search** - Find entities even with typos
+- **Deep Search** - Search within automation triggers, script sequences, and helper configs
+- **Backup & Restore** - Safe configuration management
+
+Full features and documentation: https://github.com/homeassistant-ai/ha-mcp
+
+---
+
+## Installation
+
+
+1. **Click the button to add the repository** to your Home Assistant instance:
+
+   [![Add Repository](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fhomeassistant-ai%2Fha-mcp)
+
+   Or manually add this repository URL in Settings → Apps → Install app → ⋮ → Repositories
+   (Settings → Add-ons → Add-on store before Home Assistant 2026.2):
+   ```text
+   https://github.com/homeassistant-ai/ha-mcp
+   ```
+
+2. **Navigate to the app** "Home Assistant MCP Server" from the App store
+
+3. **Click Install, Wait and then Start**
+
+4. **Check the app logs** for your unique MCP server URL:
+
+   ```
+   🔐 MCP Server URL: http://192.168.1.100:9583/private_zctpwlX7ZkIAr7oqdfLPxw
+
+   ```
+
+   The app listens on every IPv4 and IPv6 address of the Home Assistant
+   host; IPv6 clients are accepted from the local network only (see
+   [`ipv6_allowed_networks`](#ipv6_allowed_networks)). For an IPv6 address,
+   put it in brackets: `http://[2001:db8::10]:9583/private_...`.
+
+5. **Configure your AI client** using one of the options below
+
+---
+
+## Client Configuration
+
+> **You already have the app — connect your client to it.** The steps below point a client at this app's HTTP endpoint (ha-mcp running *inside* Home Assistant). You do **not** also need `uvx ha-mcp`: that starts a *separate* local copy of the server on your own machine and does **not** talk to this app, so running both side by side gives you two independent instances. `uvx` is the alternative for people *not* running the app (e.g. no Home Assistant OS) — see the [Setup Wizard](https://homeassistant-ai.github.io/ha-mcp/setup/) for that path.
+
+### <details><summary><b>📱 Claude Desktop</b></summary>
+
+Claude Desktop talks to MCP servers over stdio, so it reaches the app through **mcp-remote**, run automatically via `npx`. That only needs **Node.js 20.18.1 or newer** on the computer running Claude Desktop:
+
+```bash
+# macOS
+brew install node
+
+# Windows (PowerShell)
+winget install --id=OpenJS.NodeJS.LTS -e
+```
+
+On Linux, install Node.js from [nodejs.org](https://nodejs.org/en/download): the Debian 12 and Ubuntu 24.04 packages are Node.js 18, which is too old for mcp-remote.
+
+Then add to your Claude Desktop configuration file:
+
+**Location:**
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Windows (traditional installer): `%APPDATA%\Claude\claude_desktop_config.json`
+- Windows (Microsoft Store): path varies by package — see the [Windows setup guide](https://homeassistant-ai.github.io/ha-mcp/guide-windows) for a detection snippet
+
+**Configuration:**
+```json
+{
+  "mcpServers": {
+    "home-assistant": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "http://192.168.1.100:9583/private_zctpwlX7ZkIAr7oqdfLPxw", "--allow-http"]
+    }
+  }
+}
+```
+
+Replace the URL in `args` with the one from your app logs. `--allow-http` lets mcp-remote reach a plain `http://` URL on your local network; drop it if your URL starts with `https://`. No token goes here — the app handles authentication behind the secret path in the URL.
+
+**Restart Claude Desktop** after saving the configuration.
+
+**How it works:** `npx` runs [mcp-remote](https://github.com/punkpeye/mcp-remote#usage), which converts the app's HTTP endpoint to the stdio Claude Desktop expects.
+
+**Migrating from mcp-proxy:** replace the whole server entry with the configuration above. We no longer recommend `mcp-proxy` for connecting to ha-mcp.
+
+</details>
+
+### <details><summary><b>💻 Claude Code</b></summary>
+
+Use the `claude mcp add` command:
+
+```bash
+claude mcp add-json home-assistant '{
+  "url": "http://192.168.1.100:9583/private_zctpwlX7ZkIAr7oqdfLPxw",
+  "type": "http"
+}'
+```
+
+Replace the URL with the one from your app logs.
+
+**Restart Claude Code** after adding the configuration.
+
+</details>
+
+### <details><summary><b>📘 Codex</b></summary>
+
+Codex connects to HTTP MCP servers directly — use the URL from your app logs:
+
+```bash
+codex mcp add home-assistant --url http://192.168.1.100:9583/private_zctpwlX7ZkIAr7oqdfLPxw
+```
+
+**Heads-up:** as of early 2026, Codex's HTTP MCP support has a known initialization bug ([openai/codex#11284](https://github.com/openai/codex/issues/11284)) where the server connects but exposes **no tools**, even when the same endpoint works in other clients. If Codex shows no ha-mcp tools, run ha-mcp locally over stdio with `uvx` (see the [Setup Wizard](https://homeassistant-ai.github.io/ha-mcp/setup/)) instead.
+
+</details>
+
+### <details><summary><b>🧩 Cursor / Windsurf / other HTTP-native clients</b></summary>
+
+These connect to HTTP MCP servers directly: add a new HTTP MCP server pointing at the **MCP Server URL** from the app logs — no proxy needed. See your client's own MCP configuration docs for the exact field name.
+
+</details>
+
+### <details><summary><b>🌐 Web Clients (Claude.ai, ChatGPT, etc.)</b></summary>
+
+For secure remote access, you have two options:
+
+#### Option A: Webhook Proxy App (Simplest — if you have Nabu Casa or an existing reverse proxy)
+
+The **Webhook Proxy** app routes MCP traffic through your existing Home Assistant reverse proxy — no separate tunnel needed.
+
+1. Install the **MCP Server app** first (if not already installed — see the Installation section above)
+2. Install the **"Webhook Proxy for HA MCP"** app from the App store
+3. Start it and **restart Home Assistant** when prompted
+4. Copy the URL from the webhook proxy app logs:
+   ```
+   MCP Server URL (remote): https://xxxxx.ui.nabu.casa/api/webhook/mcp_xxxxxxxx
+   ```
+5. Use that URL in your MCP client
+
+Works with Nabu Casa, Cloudflare, DuckDNS, nginx, or any other reverse proxy pointing at HA.
+
+**Claude.ai:** **Settings** → **Customize** → **Add** → **Add custom connector** (the entry point can differ by browser; on accounts with the new Plugins page, **Customize** reads **Plugins**), enter a name and the URL, click **Continue**, and keep the settings Claude detects (**Authentication: No sign in** for the plain webhook URL; **Sign in now** or **Sign in when needed**, whichever is detected, + **Use Claude's published identity** if you enabled the proxy's `ha_auth` OAuth mode; **Use your own OAuth client** with the Client ID/Secret from the log for `legacy`). Click **Add**; if the connector then shows a **Connect** button, click it. After changing the proxy's OAuth mode, remove and re-add the connector.
+
+On a Team or Enterprise plan, an Owner or Primary Owner opens the form under **Organization settings** → **Connectors** → **Add** → **Custom** → **Web** instead and adds the connector the same way; members then find it under **Customize** → **Connectors** (under **Plugins** on accounts with the new Plugins page) and click **Connect**. With the plain webhook URL, the URL is the only credential, and in the proxy's `legacy` mode the Client ID and Secret the owner enters are, so every member who connects it gets this server's Home Assistant access without signing in. With the proxy's `ha_auth` OAuth mode each member signs in to Home Assistant, but any account that can sign in gets the same admin-equivalent access, not its own Home Assistant permissions.
+
+#### Option B: Cloudflared App (No existing reverse proxy needed)
+
+Use the **Cloudflared app** for a dedicated tunnel:
+
+##### Install Cloudflared App
+
+[![Add Cloudflared Repository](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fbrenner-tobias%2Faddon-cloudflared)
+
+##### Configure Cloudflared
+
+**Note:** The Cloudflared app requires a Cloudflare account and uses named tunnels. You'll need to authenticate via the browser flow when first setting up the tunnel.
+
+Add to Cloudflared app configuration:
+
+```yaml
+additional_hosts:
+  - hostname: ha-mcp  # Named tunnel (requires Cloudflare account)
+    service: http://localhost:9583
+```
+
+Or with a custom domain (requires DNS setup in Cloudflare):
+```yaml
+additional_hosts:
+  - hostname: ha-mcp.yourdomain.com
+    service: http://localhost:9583
+```
+
+**If `localhost` doesn't reach the MCP app** (the Cloudflared app tunnels from inside its own container), point the tunnel at the MCP app's container hostname instead — find it on the MCP Server app's **Information** page (e.g. `b37de126-ha-mcp`):
+
+```yaml
+additional_hosts:
+  - hostname: ha-mcp.yourdomain.com
+    service: http://<your-prefix>-ha-mcp:9583
+```
+
+##### Authenticate and Get Your Public URL
+
+When you first start Cloudflared:
+
+1. **Check the app logs** for an authentication URL like:
+   ```
+   Please open the following URL and log in with your Cloudflare account:
+   https://xyz.cloudflare.com/argotunnel?...
+   ```
+
+2. **Open the URL in your browser**, log in with your Cloudflare account, and select a website to authorize the tunnel
+
+3. **After authentication**, the logs will show your tunnel URL:
+   - Named tunnel: `https://ha-mcp-<random>.cfargotunnel.com`
+   - Custom domain: `https://ha-mcp.yourdomain.com` (if DNS configured)
+
+##### Use Your MCP Server
+
+Combine the Cloudflare tunnel URL with your secret path:
+```
+https://ha-mcp-<random>.cfargotunnel.com/private_zctpwlX7ZkIAr7oqdfLPxw
+```
+
+**Benefits:**
+- No port forwarding required
+- Automatic HTTPS encryption
+- Optional Cloudflare Zero Trust authentication
+- Centrally managed with other Home Assistant services
+
+**Note on Quick Tunnels:** True Quick Tunnel mode (temporary `*.trycloudflare.com` URLs without account) requires running `cloudflared tunnel --url http://localhost:9583` directly via CLI or Docker, which is not supported by this app. The Home Assistant Cloudflared app uses named tunnels that require a Cloudflare account for authentication and management.
+
+##### ⚠️ Disable "Block AI Training Bots"
+
+> **This is the most common connection issue for Cloudflare users.** If your LLM client can't connect but visiting the URL in your browser works, this setting is almost certainly the cause.
+
+Cloudflare's "Block AI training bots" feature blocks requests from AI/LLM clients by default. You must disable it:
+
+1. Log in to [Cloudflare](https://dash.cloudflare.com)
+2. In the left sidebar, click **Domains**, then click **Overview**
+3. Click on the domain you use for connecting to Home Assistant
+4. On the right side of the page, find **"Control AI Crawlers"**
+5. Under **"Block AI training bots"**, open the dropdown
+6. Select **"do not block (allow crawlers)"**
+
+![Cloudflare AI Crawlers Setting](https://homeassistant-ai.github.io/ha-mcp/images/cloudflare-ai-crawlers-setting.jpg)
+
+**Also check geo / country blocking.** Most AI/LLM services connect from US-based cloud infrastructure, so if a Cloudflare WAF rule blocks US IP addresses (or only allows your own country), your client cannot connect even with AI-bot blocking disabled. Allow your AI provider's IP ranges — Claude.ai connects from Anthropic's network, `160.79.104.0/21` (see [Anthropic's IP ranges](https://platform.claude.com/docs/en/api/ip-addresses)).
+
+See [Cloudflared app documentation](https://github.com/brenner-tobias/addon-cloudflared/blob/main/cloudflared/DOCS.md) for advanced configuration.
+
+</details>
+
+---
+
+## Use from Home Assistant's own AI (Home Assistant 2026.10+)
+
+On Home Assistant 2026.10 or newer, the app announces itself to the
+**Model Context Protocol** integration. **Settings → Devices & services**
+shows it as discovered; select **Add** and confirm. Its tools then become an
+API that Home Assistant conversation agents can select under
+**Control Home Assistant**. Select **Ignore** if you do not want that.
+
+- On an older Home Assistant the app announces nothing. After updating Home
+  Assistant, restart the app to be discovered.
+- Turn on [`enable_tool_search`](#enable_tool_search) for this use. A
+  conversation agent receives every tool description with every message, and
+  the full catalog is far larger than the search tools.
+- Home Assistant stops a tool call after 10 seconds, so long operations
+  (backups, restarts, large searches) can report a timeout while they still
+  finish.
+- If you added the app's URL to the integration by hand before, that entry
+  keeps working. Home Assistant still offers the discovered one unless the
+  manual entry uses the exact URL the app announces
+  (`http://<app hostname>:9583/...`), so an entry added with the IP address
+  ends up next to a second one for the same server. Keep only one. To get an
+  API name that stays the same when the app is reinstalled, remove the manual
+  entry and add the discovered one. If it is not offered, restart Home
+  Assistant.
+
+## Configuration Options
+
+The app has minimal configuration - most settings are automatic.
+
+> 🔄 **After changing any setting, refresh your client's tool list.** When a
+> setting changes the tools the server exposes (Tool Search, Read Only Mode,
+> enabled/disabled/pinned tools, etc.), your AI client keeps serving its
+> **cached** tool list until it re-fetches. Restarting the app or Home
+> Assistant does **not** refresh the client — you must reconnect or refresh
+> the MCP server in your AI client (e.g. in ChatGPT open **Settings**, then
+> the plugin settings, select the connector and click **Refresh tools**;
+> disconnect and reconnect a Claude Desktop custom connector; refresh the
+> tools list of a claude.ai connector; or quit and reopen Claude Desktop
+> for a server in `claude_desktop_config.json`), then start a new
+> conversation. Symptom if you skip this:
+> newly enabled tools don't appear in the client at all, and tools the
+> server no longer exposes still show as available but return `Unknown
+> tool` when called. ChatGPT sometimes keeps serving the stale list even
+> after the connector is removed and re-added under the same name — if
+> tools are still missing after a refresh, delete the connector and create
+> a new one with a **different name**. The
+> [FAQ](https://homeassistant-ai.github.io/ha-mcp/faq/#chatgpt-stale-tools)
+> has the full steps.
+
+### enable_snapshot_actions
+
+**Default:** `true`
+
+**Allow full HA snapshot actions.** `ha_manage_backup` is mandatory and
+remains enabled when listed in `disabled_tools`; this option and
+`backup_read_only` control its actions, here or in the web Settings UI
+**Backups** tab.
+
+Turning this off blocks full HA snapshot actions through `ha_manage_backup`
+and the guarded backup routes in `ha_call_service`, including listing. It does
+not block scripts or automations that call these services inside Home
+Assistant. Edit backups remain available. Deletion is only available through
+`ha_manage_backup`, also requires **Allow snapshot deletion**
+(`enable_snapshot_delete`), and its protections still apply.
+
+### backup_read_only
+
+**Default:** `false`
+
+**Make backup management read-only.** Allows edit-backup list, view, and diff,
+and snapshot list when snapshot actions are enabled. Blocks manual create,
+restore (including edit restores), and delete. Automatic pre-edit backups
+continue.
+
+`enable_snapshot_actions` and `backup_read_only` restrict AI calls to `ha_manage_backup` and the equivalent
+backup services and commands sent through `ha_call_service`
+(`hassio.backup_*`, `hassio.restore_*`, `backup.create*`, `backup/` snapshot
+commands, and Supervisor `/backups` requests). Full snapshot deletion through
+`ha_call_service` is refused; use `ha_manage_backup`. Code Mode is a beta
+escape hatch and is not fully covered by these options. Scripts and
+automations that call these services run inside Home Assistant and are not
+covered. Human backup actions in the settings page remain available. Save,
+then restart the app to apply changes. Disabling snapshot actions blocks
+snapshot listing even when backup management is read-only.
+
+### secret_path (Advanced)
+
+**Default:** Empty (auto-generated)
+
+Custom secret path override. **Leave empty for auto-generation** (recommended).
+
+- When empty, the app generates a secure 128-bit random path on first start
+- The path is persisted to `/data/secret_path.txt` and reused on restarts
+- Custom paths are useful for migration or specific security requirements
+
+**Note:** This is an advanced option. Enable "Show unused optional configuration options" in the app configuration UI to see it.
+
+### verify_ssl (Advanced)
+
+**Default:** `true`
+
+Verify the Home Assistant server's TLS certificate.
+
+The app talks to HA via the Supervisor proxy (`http://supervisor/core`), so this option has no effect for the default install. Disable it only if you have reconfigured the app to point at an HTTPS endpoint whose certificate doesn't match the hostname being called — for example a local HTTPS endpoint at `https://homeassistant.local:8123`, or a public hostname fronted by a reverse proxy whose certificate is issued for a different name.
+
+When disabled, both the REST and WebSocket clients connect with hostname checking and certificate verification turned off, and a warning is logged once per client.
+
+**Note:** Disabling weakens transport security. Leave this on unless you know you need it. The OAuth flow inherits the server-wide setting — there's no per-user verify_ssl override.
+
+Requires app restart to take effect.
+
+### custom_instructions (Advanced)
+
+**Default:** empty
+
+Text that is added to the MCP server instructions, which every AI assistant receives when it connects. With the HA-MCP integration's conversation-agent API enabled, it also becomes part of the prompt of every Home Assistant conversation agent (Assist) that uses this toolset. Use it for guidance that should reach all your clients at once instead of configuring each one separately, for example:
+
+> Household notes are kept in `/share/llm/home.md`. Read them before changing anything in Home Assistant, and add lasting findings there.
+
+Keep it short: every client receives the whole text on each connection, and it adds to that client's context. Do not put secrets in it, since every connected client can read it.
+
+When empty, nothing is added. It is meant to be set by you — through this option, the web settings UI or the `HAMCP_CUSTOM_INSTRUCTIONS` env var — so it carries the same trust as your own client instructions or memory files. The developer tools refuse to change it. An agent that can edit this app's options (for example through `ha_manage_app`) could still change it, so restrict that tool with a security policy if that matters to you. Some MCP clients do not pass server instructions to the model, so check that yours does.
+
+Requires app restart to take effect; clients see the new text after they reconnect.
+
+### enable_tool_search
+
+**Default:** `false`
+
+Replaces the full tool catalog (~87 tools) with search-based discovery (~4 proxy tools). When enabled, tools are found via `ha_search_tools` and executed through categorized proxies (read/write/delete).
+
+> ⚠️ **Do NOT enable this if your client has its own built-in tool search / deferred tools (claude.ai, Claude Desktop, Claude Code).** The two search layers conflict — running both at once does not work — and the client's built-in tool search is the better choice there anyway. Leave this off in those clients. Some Codex models and ChatGPT include deferred tools too — check your client/model directly to confirm its features so you don't leave this enabled unnecessarily.
+
+**When to enable:**
+- Setups that load the **full tool catalog up front** — whether that happens depends on the client and model combination. This covers models **without native deferred tool support** (OpenAI-compatible local models, Gemini, and **Claude Haiku**, which does not use Claude's built-in deferred tool loading), and clients that **inline all tool schemas regardless of model** (e.g. GitHub Copilot CLI, even when running Claude Sonnet or Opus).
+- Models with **limited context windows** (≤200K) or deployments where context cost is a concern
+- MCP clients that **cap total tools** (e.g. at 100) — reduces visible tool count to ~4
+
+**When to leave disabled (default):**
+- **Clients with built-in tool search / deferred tools (claude.ai, Claude Desktop, Claude Code)** — the two layers conflict, and the client's built-in search is the better choice; use it instead.
+- Other clients with native deferred tool support — tools are loaded on demand, so the full catalog has no idle context cost.
+- When you need direct tool access without the search step.
+
+This option (off by default) sets the catalog of the main MCP URL only. To give one client a fixed catalog regardless of it, append `/catalog/full` or `/catalog/search` to that client's MCP URL, optionally after `/readonly`. Webhook URLs accept the same suffixes on an embedded integration or Webhook Proxy app (add-on) release that serves them; an older one returns 404 for them. See [Per-URL tool catalog](https://github.com/homeassistant-ai/ha-mcp#per-url-tool-catalog).
+
+Requires app restart to take effect.
+
+### tool_search_max_results
+
+**Default:** `5` (range 2-10)
+
+Maximum number of hidden tools returned per `ha_search_tools` call when `enable_tool_search` is on; a pinned tool that ranks inside that top count is added as a short name-only entry on top of it. Lower values (2-3) save context tokens but may miss relevant tools. Has no effect unless tool search is enabled.
+
+Requires app restart to take effect.
+
+### enable_tool_security_policies
+
+**Default:** `false`
+
+Gates high-stakes tool calls (lock/alarm control, automation writes, etc.) behind explicit user approval. When a guarded tool is called, the agent is told to ask the user to open the Tool Security Policies tab in the web UI, and the call is held until the user clicks **Approve** there. Per-tool rules — with optional argument conditions — are configured from the same Tool Security Policies tab.
+
+**When to enable:**
+- Shared installations where you want a human in the loop for destructive or security-relevant operations
+- Locks, alarms, and other entities where an LLM mistake has real-world consequences
+- Whenever you want a per-call user-approval prompt before high-stakes operations run (locks, automations, etc.)
+
+**When to leave disabled (default):**
+- Single-user setups where you're comfortable with the LLM acting autonomously
+- You haven't configured any policy rules yet (with no rules, the toggle has no effect — but the runtime cost is small either way)
+
+Off by default. Requires app restart to take effect.
+
+**Example Configuration:**
+
+```yaml
+enable_tool_security_policies: true
+```
+
+Per-tool rules (including argument conditions like `args.domain in ['lock', 'alarm_control_panel']`) are configured from the **Tool Security Policies** tab in the web UI, not from `config.yaml`.
+
+A tool's conditions are alternatives: a call matches when any one of them holds. **+ AND** adds a sub-condition to one condition, and that condition then holds only when all of its sub-conditions do, so each AND narrows the calls that condition matches. Sub-conditions that no single value can satisfy, such as `args.domain` equals `light` AND `args.domain` equals `lock`, make that condition match nothing for a plain value. The tab refuses to save a condition in which one argument must equal a string and also equal another string, NOT equal it, be one of a list without it, or NOT be one of a list with it (wildcard paths and case-only differences are not checked, although under an allow list they match nothing too); such a condition saved elsewhere is marked on its row. In a require-approval list, to gate a list argument that holds several values, use contains once for each value; under an allow list every item of a list must be approved, so use is one of with every value its items may take.
+
+In a require-approval list, a sub-condition also holds when one item of a list argument, or one part of a comma-separated value, satisfies it (each sub-condition may use a different item), because Home Assistant reads `"light.a, lock.x"` as two entity IDs. So `args.entity_id` equals `lock.x` gates `["lock.x"]` and `"light.a, lock.x"` too. A free-text argument with a comma is split the same way, which can gate a call that would not match as a whole.
+
+**Allow list.** By default a matching rule requires approval and every other call runs. Setting **Approval mode** to **Require approval unless a rule matches (allow list)** reverses that: the rules list the calls that run without approval, and every other call, reads included, needs approval. Only tool search and managing pending approvals stay exempt. An allow list matches strictly, so neither a case variant nor one listed value among unlisted ones can ride an approval: a condition must hold with exact case, for every value a wildcard path (`args.operations.*.entity_id`) or a list argument reaches, every branch of a wildcard path must hold the field (so a batch operation without it, or an argument that lacks it, needs approval; a plain value such as the `domain` string lacks every field, so `args.*.entity_id` approves no `ha_call_service` call that can run), and an object argument matches only by equals or is one of. Regex and contains still match substrings, so anchor a regex with `^…$`, and does NOT equal / is NOT one of approve everything they do not name. A string value at a condition's path that contains a comma or has leading or trailing whitespace matches no condition except is present, whatever the argument, because Home Assistant splits and strips entity IDs given that way. Approvals given under an allow list are never remembered: each one covers a single call. A rule constrains only the arguments it names, so an approval for `entity_id` equals `lock.shed` also covers a call that adds `area_id` or another target argument. To approve one exact call, match the whole argument object instead: path `args`, is one of, and a list of the approved argument objects.
+
+**Matching object keys.** A path ending in `*~` reaches the keys of an object argument instead of its values. A scene names the entities it sets as keys (`{"lock.front_door": "unlocked"}`), so for `ha_config_set_scene` the path `args.config.entities.*~` with regex `^(lock|siren|alarm_control_panel)\.` gates every scene that includes one of them, where `args.config.entities.*` would only reach the target states. Under an allow list every key must satisfy the condition, and an empty or missing `entities` needs approval. `*~` must be the last segment of a path. Such a rule covers only scene definitions written through `ha_config_set_scene`: a `python_transform` edit, `activate=True` on an existing scene, and `scene.apply` or `scene.create` through `ha_call_service` each need a rule of their own.
+
+If you edit `tool_policy.json` by hand, spell every field exactly: an unknown field (a typo such as `rule_efect`) makes the policy fail to load, and every tool call is then refused until the file is fixed.
+
+Downgrading to a release without allow-list support reads an allow list as a require-approval list, which inverts it: the approved calls then need approval and everything else runs. Switch back to **Require approval for matching calls (block list)** before downgrading.
+
+*Inspired by [PolicyLayer](https://policylayer.com/)'s policy DSL shape, originally proposed in [#966](https://github.com/homeassistant-ai/ha-mcp/issues/966) by [@L1AD](https://github.com/L1AD).*
+
+### read_only_mode
+
+**Default:** `false`
+
+Toggles all write tools off, and removes ability for tools to make any write or destructive calls. Write-capable tools disappear from the AI's tool list, and any write operation that still reaches the server (for example through the tool-search proxies) is blocked with a structured `READ_ONLY_MODE` error the AI understands.
+
+Mixed read/write tools whose read functionality exists nowhere else stay available with their write operations blocked:
+
+- `ha_config_get_dashboard` — config/list/search reads; optional screenshot rendering is a beta feature that uses a separate screenshot engine (see [beta documentation](../docs/beta.md))
+- `ha_manage_backup` — only listing and viewing per-edit backups
+- `ha_manage_app` — only HTTP GET proxy reads of app (add-on) APIs
+- `ha_manage_energy_prefs` — only `mode='get'` and `dry_run=true` previews
+- `ha_manage_pipeline` — only `action='list'` / `'get'`
+- `ha_manage_custom_tool` — only `list_saved=true`
+
+**When to enable:**
+- Using the AI for analysis, audits, and suggestions only
+- Demos or shared setups where the assistant must never change anything
+
+The same toggle appears at the top of the **Tools** tab in the web UI. Off by default. Requires app restart to take effect.
+
+**Example Configuration:**
+
+```yaml
+read_only_mode: true
+```
+
+### redact_secrets
+
+**Default:** `false`
+
+Redacts secrets from tool responses before they reach the AI assistant. When enabled:
+
+- **App (add-on) options** (`ha_get_app`, `ha_manage_app`): any option value whose app schema marks it `format: password` is replaced with `<redacted: set>` or `<redacted: empty>` — so "is this credential configured at all?" stays answerable without disclosing the value.
+- **Integration options** (`ha_get_integration`): only an entry's options flow marks which fields are passwords, and a read does not open that flow, because opening it runs the integration's own code. So a read replaces every option value of an entry that has an options flow. With `include_schema=True` the flow is opened and only the fields it marks with a password selector get that treatment, including each field's `current` value. Stored option values are checked against the flow's first form only, so a password field that only a later form declares is not detected in them.
+- **All other tool responses** (logs, file reads, diagnostics, etc.): occurrences of secret values the server has already seen on the surfaces above are scrubbed to `<redacted>`.
+
+Redaction is schema-driven — fields not marked as passwords by their schema are not detected and are returned as-is until the value scrub has seen them. Two exceptions: app option values holding a private key, and app options named in [`redact_app_option_keys`](#redact_app_option_keys). The value scrub skips secrets shorter than 6 characters (replacing tiny fragments would corrupt unrelated output). Writes through `ha_manage_app` keep working with partial updates (merging uses the real current options server-side), and submitting a redaction marker as a value is rejected so a redacted read can never be written back into a live config.
+
+**When to enable:**
+- App or integration configs hold credentials (API tokens, PATs, database passwords) that must not land in AI conversation transcripts
+
+Off by default. Requires app restart to take effect.
+
+**Example Configuration:**
+
+```yaml
+redact_secrets: true
+```
+
+### redact_app_option_keys
+
+**Default:** `""` (empty)
+
+App option names, separated by commas or new lines, that `redact_secrets` treats like password fields, for apps whose schema stores a secret as a plain string. A name applies to every app; `app_slug:name` limits it to one app, and the slug may be written with or without its repository prefix (`cebe7a76_hassio_google_drive_backup` or `hassio_google_drive_backup`). Names match options at any nesting level, and naming an option group covers every option in it. A listed option that the app has since dropped from its schema stays redacted, since Supervisor keeps its saved value. Listed options get the same handling as schema password fields: the value is replaced with a set/empty marker in `ha_get_app` and scrubbed from other tool responses (a marker submitted back through `ha_manage_app` is rejected for every option). If a name scoped to an app matches none of its options, `ha_get_app` says so in its `warnings`. Ignored while `redact_secrets` is off.
+
+**When to set:**
+- An app keeps a password or token in an option its schema does not mark as a password (for example Google Drive Backup's `backup_password`)
+
+The fix that covers every client is the app declaring the option as `password` in its schema; this setting bridges the gap until it does.
+
+Requires app restart to take effect.
+
+**Example Configuration:**
+
+```yaml
+redact_secrets: true
+redact_app_option_keys: backup_password,snapshot_password
+```
+
+### ipv6_allowed_networks
+
+**Default:** `""`
+
+The app's port answers IPv6 clients from the local network only, the way IPv4 sits behind your router's NAT: loopback, link-local, unique local addresses (`fc00::/7`) and the networks the Home Assistant host is directly connected to. IPv6 clients from anywhere else get `403`, even if your router lets inbound IPv6 through. IPv4 is unaffected.
+
+List any other IPv6 networks that should reach the app, separated by commas or new lines. Adding `::/0` allows every IPv6 client, including from the internet if your router admits inbound IPv6. Requires app restart to take effect.
+
+**Example Configuration:**
+
+```yaml
+ipv6_allowed_networks: 2001:db8:5::/48
+```
+
+### enable_security_policy_tool
+
+**Default:** `false`
+
+Registers the `ha_manage_security_policy` tool, which lets connected AI agents read and rewrite the tool security policies, including removing approval gates.
+
+This option is independent of `enable_tool_security_policies`: it controls who can edit the rules, not whether they are enforced. The tool cannot see or decide pending approvals. To keep a human in the loop, gate the tool before you enable it: switch on "security gated" for Manage Security Policy in the **Tools** tab of the web UI. The gate is part of the policy this tool edits, so an approved `set` call can remove it. Check that each change you approve keeps it.
+
+Off by default. Requires app restart to take effect.
+
+### enable_mandatory_bps
+
+**Default:** `true`
+
+Attaches the Home Assistant best-practice reference files to the response of every successful write by the six config write tools (automations, scripts, scenes, helpers, dashboards, raw YAML), under `skill_content`. Reference sections cited by best-practice warnings are added too.
+
+Each tool also has a per-call `MandatoryBPS` parameter that the agent can set to `false` once it has the content. When this option is off, no `skill_content` is sent, whatever the per-call parameter or the warnings say.
+
+Leave it on. Turn it off only for models with very small context windows; write accuracy may drop. Requires app restart to take effect.
+
+### enable_strict_mandatory_bps
+
+**Default:** `true`
+
+Blocks the six best-practice write tools (automations, scripts, scenes, helpers, dashboards, raw YAML) until the client proves it read the best practices. A blocked call returns an error that tells the client to read the best-practices skill with `ha_get_skill_guide` and pass back the acknowledgment key it gets there. While this is on, `ha_get_skill_guide` cannot be disabled, because it is the only source of the key.
+
+Has no effect while `enable_mandatory_bps` is off. Requires app restart to take effect.
+
+### ha_tool_concurrency
+
+**Default:** `0` (range 0-32)
+
+Limits how many Home Assistant tool calls run at the same time across all sessions. `0` means no limit. A call that waits for a free slot fails after 60 seconds. The limit applies to whole tool calls only: the REST, WebSocket and per-tool concurrency inside a call does not change.
+
+A limit lets constrained installs queue tool calls instead of running them all at once. Requires app restart to take effect.
+
+### enable_auto_backup
+
+**Default:** `true`
+
+Saves a snapshot of an entity before each write or delete tool call changes it (automations, scripts, scenes, helpers, dashboards, dashboard resources, labels, categories, groups, zones, areas, calendars, to-do lists, entities, devices, integrations, and their remove/delete tools). Snapshots are YAML files under `/data/ha_mcp_backups/`. List, restore or delete them in the **Backups** tab of the web UI, or with `ha_manage_backup(scope='edits', ...)`.
+
+For those tools the snapshot is best effort: a failed capture logs a warning and the write goes ahead. The file and raw-YAML tools (`ha_write_file`, `ha_delete_file`, `ha_config_set_yaml`) need the snapshot: while this option is off they refuse to write, and a failed capture blocks the write.
+
+Requires app restart to take effect.
+
+### auto_backup_throttle_minutes
+
+**Default:** `0` (range 0-1440)
+
+How often auto-backup may capture the same entity. `0` captures a snapshot on every write; a value N above 0 captures at most one snapshot per N minutes per entity.
+
+### auto_backup_retain_per_entity
+
+**Default:** `100` (range 1-10000)
+
+The most snapshots kept per entity. Each new capture removes the oldest snapshots above this number.
+
+### enable_snapshot_delete
+
+**Default:** `false`
+
+Lets `ha_manage_backup` delete full Home Assistant snapshots (`scope='snapshot'`, `action='delete'`). A snapshot may be the last way back after a mistaken change, so a person must turn this on, not the AI. Even when it is on, scheduled backups, the newest snapshot and snapshots younger than `snapshot_delete_min_age_days` cannot be deleted.
+
+### snapshot_delete_min_age_days
+
+**Default:** `7` (range 0-365)
+
+How old a snapshot must be, in days, before it can be deleted. `0` turns off the age limit; the newest snapshot and scheduled backups stay protected.
+
+### disabled_tools
+
+**Default:** empty
+
+Comma-separated tool names to turn off, for example `ha_call_event,ha_eval_template`. The tools stay off and locked in the **Tools** tab of the web UI until you remove them here.
+
+These tools cannot be disabled and keep running even when listed: `ha_search`, `ha_get_overview`, `ha_get_state`, `ha_report_issue`, `ha_manage_backup`. `ha_get_skill_guide` can be disabled only while `enable_strict_mandatory_bps` is off.
+
+### pinned_tools
+
+**Default:** empty
+
+Comma-separated tool names to pin. Pinned tools appear at the top of the **Tools** tab and stay pinned in the web UI until you remove them here. Useful with `enable_tool_search`.
+
+---
+
+## Tool Settings Web UI
+
+The app exposes a web-based settings page for managing which tools are available to AI assistants. Click **"Open Web UI"** on the app info page to access it.
+
+Features:
+- **Enable/disable individual tools** — toggle each tool on or off
+- **Pin tools** — keep tools always visible when `enable_tool_search` is on
+- **Per-group master toggle** — enable/disable all tools in a group (HACS, System, etc.) with one click
+- **Search** — filter tools by name or title
+- **Mandatory tools** — `ha_search`, `ha_get_overview`, `ha_get_state`, `ha_report_issue`, and `ha_manage_backup` are always enabled and cannot be disabled (listing one in `disabled_tools` is a silent no-op — it keeps running). `ha_get_skill_guide` is additionally locked enabled while strict best-practices mode (`enable_strict_mandatory_bps`) is on — strict mode publishes its acknowledgment key only through that tool; turn strict mode off first to disable it
+- **Tool Security Policies tab** — when `enable_tool_security_policies` is on, approve held tool calls and manage per-tool rules here
+- **Advanced settings** — an advanced panel with a beta master toggle (plus per-feature sub-toggles) for opting into beta tools such as raw YAML editing, filesystem tools, and code mode. See [Beta Features](https://github.com/homeassistant-ai/ha-mcp/blob/master/docs/beta.md)
+- **In-UI restart** — a "Restart App" button appears after saving to apply changes with one click
+
+**Important:** Tool configuration changes require an app restart to take effect. The UI will prompt you to restart after saving.
+
+### Non-add-on installations
+
+In Docker (`ha-mcp-web`) and standalone HTTP installations, the settings UI is mounted under your MCP secret path. Open `http://<host>:<port>/<secret_path>/settings` (the same URL prefix that protects your MCP endpoint). This keeps the auth posture consistent — anyone who can reach your MCP endpoint can also use the settings UI; anyone who can't, can't.
+
+### Text-field fallback
+
+If you prefer not to use the web UI (or want to set these before first start), the `disabled_tools` and `pinned_tools` options accept comma-separated tool names as seed values. On first start, the app creates `/data/tool_config.json` from these values; after that, the web UI is the source of truth. Mandatory tools (listed above) cannot be disabled this way.
+
+---
+
+## Security
+
+### Auto-Generated Secret Paths
+
+The app automatically generates a unique secret path on first startup using 128-bit cryptographic entropy. This ensures:
+
+- Each installation has a unique, unpredictable endpoint
+- The secret is persisted across restarts
+- No manual configuration needed
+
+### Authentication
+
+The app uses Home Assistant Supervisor's built-in authentication. No tokens or credentials are needed - the app automatically authenticates with your Home Assistant instance.
+
+### Network Exposure
+
+- **Local network only by default** - The app listens on port 9583
+- **Remote access** - Use the [Webhook Proxy app](../homeassistant-addon-webhook-proxy/DOCS.md) (easiest with Nabu Casa) or the Cloudflared app for secure HTTPS tunnels
+- **Never expose** port 9583 directly to the internet without proper security measures
+
+### Supervisor Permissions
+
+The app requests `hassio_role: manager` (declared in `config.yaml`).
+`manager` is required for the Supervisor REST endpoints used to fetch
+add-on and system-service logs (`/addons/<slug>/logs`, `/<service>/logs`,
+`/core/logs`) — `default` returns 403 (see #1116). The role also supports
+explicit app management through `ha_manage_app`. When dashboard screenshots
+are enabled, the screenshot integration uses read-only Supervisor app listing
+and app-info endpoints to discover a supported renderer; it does not change
+renderer options.
+
+---
+
+## Troubleshooting
+
+### App won't start
+
+**Check the logs** for errors:
+- Configuration validation errors
+- Dependency installation failures
+- Port conflicts (9583 already in use)
+
+**Solution:** Review the error message and adjust configuration or free up the port.
+
+### Can't connect to MCP server
+
+**Verify:**
+1. App is running (check status in Supervisor)
+2. You copied the **complete URL** including the secret path from logs
+3. Your MCP client configuration is correct
+4. No firewall blocking port 9583 on your local network
+
+**Solution:** Restart the app and copy the URL from fresh logs.
+
+### Lost the secret URL
+
+**Options:**
+1. Check the app logs (scroll to startup messages)
+2. Restart the app (logs will show the URL again)
+3. Read directly from `/data/secret_path.txt` using the Terminal & SSH app
+4. Generate a new secret by deleting `/data/secret_path.txt` and restarting
+
+### Operations failing
+
+**Check app logs** for detailed error messages. Common issues:
+
+- Invalid entity IDs (use fuzzy search to find correct IDs)
+- Missing permissions (app should have full access)
+- Home Assistant API errors (check HA logs)
+
+**Solution:** Review the specific error in logs and adjust your commands accordingly.
+
+### Performance issues
+
+If the app is slow or unresponsive:
+
+1. Check Home Assistant system resources (CPU, memory)
+2. Review app logs for warnings
+3. Restart the app
+4. Consider reducing concurrent AI assistant operations
+
+---
+
+## Available Tools
+
+<!-- ADDON_TOOLS_START -->
+
+The add-on provides 87+ MCP tools for controlling Home Assistant:
+
+> **Note:** This list is regenerated from the `master` branch on every push, but the add-on image you have installed only updates on stable releases (biweekly, Wednesdays 10:00 UTC). A tool listed below may not yet be present in your installed runtime. If so, calling it returns an "unknown tool" error until the next stable release.
+
+> Tools marked **(beta — dev channel only)** are gated behind feature flags and ship with the dev channel add-on only. See [docs/beta.md](https://github.com/homeassistant-ai/ha-mcp/blob/master/docs/beta.md) for setup and caveats.
+
+### Apps (add-ons)
+- `ha_get_app` — Get installed or available Home Assistant apps (add-ons), or details for one.
+- `ha_manage_app` — Manage Home Assistant apps (add-ons) or proxy an app API.
+
+### Areas & Floors
+- `ha_list_floors_areas` — List floors sorted by level ascending, each with their assigned areas nested, plus areas without a floor.
+- `ha_remove_area_or_floor` — Remove a Home Assistant area or floor.
+- `ha_set_area_or_floor` — Create or update a Home Assistant area or floor.
+
+### Assist
+- `ha_manage_pipeline` — Manage Home Assistant Assist pipelines.
+
+### Automations
+- `ha_config_get_automation` — Get a Home Assistant automation's stored configuration.
+- `ha_config_remove_automation` — Delete a Home Assistant automation permanently.
+- `ha_config_set_automation` — Create or update a Home Assistant automation.
+
+### Blueprints
+- `ha_manage_blueprints` — Manage Home Assistant blueprints — list, read, import, save, delete, or render a standalone config.
+
+### Calendar
+- `ha_config_get_calendar_events` — Get calendar events from a calendar entity within a time range.
+- `ha_config_remove_calendar_event` — Delete an event from a calendar.
+- `ha_config_set_calendar_event` — Create a new event in a calendar, or update an existing one.
+
+### Camera
+- `ha_get_camera_image` — Get a snapshot image from a Home Assistant camera entity.
+
+### Dashboard
+- `ha_get_dashboard_screenshot` **(beta — dev channel only)** — Get rendered images of a Home Assistant Lovelace dashboard view.
+
+### Dashboards
+- `ha_config_delete_dashboard` — Delete a storage-mode dashboard completely.
+- `ha_config_delete_dashboard_resource` — Delete a dashboard resource.
+- `ha_config_get_dashboard` — Get Lovelace dashboards: list them, read one config, or search their cards.
+- `ha_config_list_dashboard_resources` — List Lovelace dashboard resources (custom cards, themes, CSS/JS).
+- `ha_config_set_dashboard` — Create or update a Home Assistant dashboard.
+- `ha_config_set_dashboard_resource` — Create or update a dashboard resource (inline code or external URL).
+
+### Developer
+- `ha_dev_manage_server` — Manage the running ha-mcp server itself (developer mode).
+- `ha_dev_manage_settings` — Manage ha-mcp server settings and the Tools/Policies/Backups surfaces (developer mode).
+
+### Device Registry
+- `ha_get_device` — Get device information with pagination, including Zigbee (ZHA/Z2M) and Z-Wave JS devices.
+- `ha_remove_device` — Remove an orphaned device from the Home Assistant device registry.
+- `ha_set_device` — Update device properties such as name, area, disabled state, or labels.
+
+### Energy
+- `ha_manage_energy_prefs` — Manage the Home Assistant Energy Dashboard preferences: grid / solar /
+
+### Entity Registry
+- `ha_get_entity` — Get entity registry information for one or more entities.
+- `ha_get_entity_exposure` — Get entity exposure settings - list all or get settings for a specific entity.
+- `ha_remove_entity` — Remove one or more entities from the Home Assistant entity registry.
+- `ha_set_entity` — Update entity properties in the entity registry.
+
+### Files
+- `ha_delete_file` **(beta — dev channel only)** — Delete a file from allowed directories in the Home Assistant config.
+- `ha_list_files` **(beta — dev channel only)** — List files in a directory within the Home Assistant config directory.
+- `ha_read_file` **(beta — dev channel only)** — Read a file from the Home Assistant config directory.
+- `ha_write_file` **(beta — dev channel only)** — Write a file to allowed directories in the Home Assistant config.
+
+### Groups
+- `ha_config_list_groups` — List Home Assistant entity groups with their member entities.
+- `ha_config_remove_group` — Remove a service-based Home Assistant entity group via the group.remove service.
+- `ha_config_set_group` — Create or update a service-based Home Assistant entity group via the group.set service.
+
+### HACS
+- `ha_get_hacs_info` — Get HACS (Home Assistant Community Store) data — search the store or fetch repository details.
+- `ha_manage_hacs` — Manage HACS (Home Assistant Community Store) — install/update, remove, add custom repositories, or refresh repository information.
+
+### Helper Entities
+- `ha_config_list_helpers` — List Home Assistant helpers of a specific type with their configurations.
+- `ha_config_set_helper` — Create or update Home Assistant helpers: storage types, every helper
+- `ha_remove_helpers_integrations` — Remove a Home Assistant helper or integration config entry.
+
+### History & Statistics
+- `ha_get_automation_traces` — Get execution traces for automations and scripts to debug issues.
+- `ha_get_history` — Get historical data from Home Assistant's recorder.
+- `ha_get_logs` — Get Home Assistant logs from various sources.
+
+### Integrations
+- `ha_get_integration` — Get integration (config entry) information with pagination.
+- `ha_get_system_health` — Get Home Assistant system health, including Zigbee (ZHA), Z-Wave JS, and per-integration diagnostics dumps.
+- `ha_set_integration` — Manage an integration (config entry): enable/disable, add, update options, reconfigure, or send its own commands.
+
+### Labels & Categories
+- `ha_config_get_category` — Get category info - list all categories for a scope or get a specific one by ID.
+- `ha_config_get_label` — Get label info - list all labels or get a specific one by ID.
+- `ha_config_remove_category` — Delete a Home Assistant category.
+- `ha_config_remove_label` — Delete a Home Assistant label.
+- `ha_config_set_category` — Create or update a Home Assistant category.
+- `ha_config_set_label` — Create or update a Home Assistant label.
+
+### Matter
+- `ha_manage_radio` — Manage Home Assistant radios — Z-Wave, Zigbee, Matter, and Thread.
+
+### Scenes
+- `ha_config_get_scene` — Get a scene's complete configuration, or list and search scenes without scene_id.
+- `ha_config_remove_scene` — Delete a Home Assistant scene.
+- `ha_config_set_scene` — Create or update a Home Assistant scene.
+
+### Scripts
+- `ha_config_get_script` — Get Home Assistant script configuration.
+- `ha_config_remove_script` — Delete a Home Assistant script.
+- `ha_config_set_script` — Create or update a Home Assistant script.
+
+### Search & Discovery
+- `ha_get_overview` — Get AI-friendly system overview with intelligent categorization.
+- `ha_get_state` — Get current status, state, and attributes of one or more entities (lights, switches, sensors, climate, covers, locks, fans, etc.).
+- `ha_search` — Search for entities (lights, sensors, switches, climate, etc.) by name, domain, or area — AND inside automation/script/scene/helper/dashboard configurations — in one call.
+
+### Service & Device Control
+- `ha_bulk_control` — Manage explicit operations or one deterministic structural bulk action.
+- `ha_call_event` — Execute a custom event on the Home Assistant event bus.
+- `ha_call_service` — Call any Home Assistant service or one-shot WebSocket command: the catch-all escape hatch.
+- `ha_get_operation_status` — Get the status of one or more device operations with real-time WebSocket verification.
+- `ha_list_services` — List available Home Assistant services with optional pagination and detail control.
+
+### System
+- `ha_config_get_yaml` **(beta — dev channel only)** — Get the current YAML fragment under a key, from one config file or across a glob.
+- `ha_config_set_yaml` **(beta — dev channel only)** — Update raw YAML configuration in configuration.yaml, packages/*.yaml, or themes/*.yaml (LAST RESORT).
+- `ha_manage_backup` — Polymorphic backup tool. See the tool description for the routing matrix.
+- `ha_manage_custom_tool` **(beta — dev channel only)** — Create and run a custom tool in a sandbox, or manage saved custom tools.
+- `ha_manage_security_policy` — Manage the tool security policy that gates high-stakes tool calls behind user approval.
+- `ha_manage_theme` — Manage Home Assistant frontend themes.
+- `ha_manage_updates` — Manage Home Assistant updates (list, details, install, skip) and Repairs issues (ignore).
+- `ha_reload_core` — Execute a Home Assistant configuration reload without a full restart.
+- `ha_restart` — Execute a Home Assistant restart.
+
+### Todo Lists
+- `ha_get_todo` — Get todo lists or items - list all todo lists or get items from a specific list.
+- `ha_remove_todo_item` — Remove items from a Home Assistant todo list.
+- `ha_set_todo_item` — Create, update or reorder a todo item in Home Assistant.
+
+### Utilities
+- `ha_eval_template` — Execute a Jinja2 template render, or an automation condition check, in Home Assistant.
+- `ha_report_issue` — Get diagnostics and a finished GitHub issue for a bug, agent feedback or a feature request.
+
+### Zones
+- `ha_get_zone` — Get zone information - list all zones or get details for a specific one.
+- `ha_remove_zone` — Remove a Home Assistant zone.
+- `ha_set_zone` — Create or update a Home Assistant zone.
+
+<!-- ADDON_TOOLS_END -->
+
+For domain-specific Home Assistant documentation, use the `ha_get_skill_guide` tool (or read the `skill://` resources directly if your MCP client supports resources).
+
+See the [main repository](https://github.com/homeassistant-ai/ha-mcp) for detailed tool documentation and examples.
+
+---
+
+## Support
+
+**Issues and Bug Reports:**
+https://github.com/homeassistant-ai/ha-mcp/issues
+
+**Documentation:**
+https://github.com/homeassistant-ai/ha-mcp
+
+**Contributing:**
+https://github.com/homeassistant-ai/ha-mcp/blob/master/CONTRIBUTING.md
+
+---
+
+## License
+
+This app is licensed under the MIT License.
+
+See [LICENSE](https://github.com/homeassistant-ai/ha-mcp/blob/master/LICENSE) for full license text.

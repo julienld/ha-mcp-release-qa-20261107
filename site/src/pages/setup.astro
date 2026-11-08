@@ -1,0 +1,734 @@
+---
+import Layout from '../layouts/Layout.astro';
+import Nav from '../components/Nav.astro';
+import PlatformIcon from '../components/PlatformIcon.astro';
+import { clientsData as clients, platformsData, scopeData } from '../scripts/setup-wizard/data';
+
+const base = import.meta.env.BASE_URL;
+
+// Helper to add base URL (ensure path keeps leading slash)
+const withBase = (path: string) => {
+  const cleanPath = path.startsWith('/') ? path : `/${path}`;
+  return `${base}${cleanPath}`;
+};
+
+// Wizard data lives in ../scripts/setup-wizard/data.ts, shared with the wizard
+// script. Logos are base-prefixed here because the pickers render them as <img>.
+const clientsData = clients.map(c => ({ ...c, logo: withBase(c.logo) }));
+---
+
+<Layout title="Home Assistant MCP Setup Wizard">
+  <Nav active="setup" />
+
+  <main id="main-content" tabindex="-1" class="focus:outline-none">
+
+  <div class="container mx-auto px-4 py-8 max-w-4xl">
+    <!-- Hero Section -->
+    <header class="text-center mb-10">
+      <h1 class="text-3xl font-bold text-white mb-2">Home Assistant MCP Setup Wizard</h1>
+      <p class="text-slate-400 mb-6">Configure the Home Assistant MCP Server for your AI assistant</p>
+
+      <!-- Quick Setup: HA Custom Component (recommended, works on every HA install type) -->
+      <div class="max-w-2xl mx-auto text-left mb-8 rounded-2xl border-2 border-green-700/50 bg-gradient-to-br from-green-900/20 to-slate-800/50 p-6">
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <div class="flex items-center gap-2">
+            <span class="inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+            <h2 class="text-lg font-semibold text-white">Quick Setup — HA Custom Component</h2>
+          </div>
+          <span class="px-3 py-1 text-xs rounded-full bg-green-900/40 text-green-300 font-medium">Recommended</span>
+        </div>
+        <p class="text-slate-400 text-sm mb-4">Runs the full ha-mcp server inside Home Assistant. Works on every Home Assistant installation type — Home Assistant OS, Supervised, Container, and Core.</p>
+        <a href="https://my.home-assistant.io/redirect/hacs_repository/?owner=homeassistant-ai&repository=ha-mcp&category=integration" target="_blank" rel="noopener noreferrer" class="inline-flex mb-4" title="Open HA-MCP in HACS">
+          <img src="https://my.home-assistant.io/badges/hacs_repository.svg" alt="Open HA-MCP in HACS" height="36" />
+        </a>
+        <ol class="text-sm text-slate-300 space-y-2 list-decimal list-inside">
+          <li>Install <strong>HA-MCP — Manage Home Assistant with AI</strong> from HACS (the Marketplace on Home Assistant 2026.11+), then restart Home Assistant.</li>
+          <li>Go to <strong>Settings → Devices &amp; Services → Add Integration</strong>, search <strong>HA-MCP</strong>, and choose <strong>HA-MCP Server</strong>.</li>
+          <li>In the form, paste an <strong>Administrator access token</strong> (your profile → <strong>Security</strong> → <strong>Long-lived access tokens</strong> → <strong>Create token</strong>; your own works from anywhere if it leaks and the server's changes show under your name), or, safer, enter the user name and password of an account made just for HA-MCP under <strong>Settings → People</strong> with <strong>Local access only</strong> and <strong>Administrator</strong> on (never your own login), and HA-MCP creates its token. Then pick how clients may connect (this form is from version 9.0.0 (October 28, 2026); earlier versions show a shorter one). Both options start off, so a client on another device needs one of them: <strong>Remote access through Home Assistant</strong> — start with <strong>Secret URL</strong> (the connect URL is the credential, nothing else to set up; switch to <strong>Home Assistant sign-in</strong> later if you want a login) — and/or <strong>Network access: Local network</strong> for clients on your LAN. Leaving both off keeps the server reachable only from the Home Assistant machine. Submit — creating the entry starts the server.</li>
+          <li>Copy the connect URL from the entry's <strong>Configure</strong> screen (a notification points you there).</li>
+          <li>Paste it into your AI client — pick the client below for its exact config.</li>
+        </ol>
+        <p class="text-slate-500 text-sm mt-4">Need client-specific config, or a different install method (App (add-on), Docker, uvx, or local stdio)? Use the setup wizard below.</p>
+      </div>
+
+    </header>
+
+    <!-- Wizard Sections (Vertical Accumulation) -->
+    <div class="space-y-6">
+
+      <!-- Section 1: Server Method -->
+      <section class="wizard-section" id="section-method">
+        <h2 class="section-header">
+          <span class="section-number">1</span>
+          How is your MCP server running?
+        </h2>
+        <!-- Recommended: HA Custom Component (works on every HA install type) -->
+        <button data-server-method="ha-component" class="option-card-large w-full">
+          <div class="flex items-center gap-2 mb-2 flex-wrap">
+            <PlatformIcon icon="home-assistant" size={22} class="text-[var(--text-secondary)]" />
+            <span class="px-2 py-0.5 text-xs rounded-full bg-green-900/30 text-green-400 font-medium">Recommended</span>
+            <span class="complexity-badge" data-complexity="quick">Quick</span>
+          </div>
+          <h3 class="font-semibold text-white">HA Custom Component</h3>
+          <p class="text-sm text-slate-400">Runs inside Home Assistant — every install type</p>
+        </button>
+
+        <h3 class="text-sm font-semibold text-slate-500 uppercase tracking-wider mt-6 mb-3">Alternative methods</h3>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <button data-server-method="ha-addon" class="option-card-large">
+            <div class="flex items-center gap-2 mb-2">
+              <PlatformIcon icon="home" size={22} class="text-[var(--text-secondary)]" />
+              <span class="complexity-badge" data-complexity="quick">Quick</span>
+            </div>
+            <h3 class="font-semibold text-white">HA app (add-on)</h3>
+            <p class="text-sm text-slate-400">Home Assistant OS / Supervised only</p>
+          </button>
+          <button data-server-method="docker" class="option-card-large">
+            <div class="flex items-center gap-2 mb-2">
+              <PlatformIcon icon="docker" size={22} class="text-[var(--text-secondary)]" />
+              <span class="complexity-badge" data-complexity="complex">Complex</span>
+            </div>
+            <h3 class="font-semibold text-white">Docker</h3>
+            <p class="text-sm text-slate-400">Container</p>
+          </button>
+          <button data-server-method="uvx" class="option-card-large">
+            <div class="flex items-center gap-2 mb-2">
+              <PlatformIcon icon="python" size={22} class="text-[var(--text-secondary)]" />
+              <span class="complexity-badge" data-complexity="complex">Complex</span>
+            </div>
+            <h3 class="font-semibold text-white">uvx (Python)</h3>
+            <p class="text-sm text-slate-400">Run the HTTP server via Python</p>
+          </button>
+          <button data-server-method="stdio-local" class="option-card-large">
+            <div class="flex items-center gap-2 mb-2">
+              <PlatformIcon icon="computer" size={22} class="text-[var(--text-secondary)]" />
+              <span class="complexity-badge" data-complexity="advanced">Not recommended</span>
+            </div>
+            <h3 class="font-semibold text-white">Local stdio</h3>
+            <p class="text-sm text-slate-400">Legacy — known transport issues; fine for the demo server</p>
+          </button>
+        </div>
+      </section>
+
+      <!-- Section 2: Client Selection -->
+      <section class="wizard-section hidden" id="section-client">
+        <h2 class="section-header">
+          <span class="section-number">2</span>
+          Select Your AI Client
+          <span class="selected-badge" id="selected-method"></span>
+        </h2>
+        <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3" id="client-grid">
+          {clientsData.map((client) => (
+            <button
+              data-client={client.id}
+              data-transports={JSON.stringify(client.transports)}
+              class="option-card group"
+            >
+              <div class="flex items-center gap-2 mb-1">
+                {/* eslint-disable-next-line astro/jsx-a11y/no-noninteractive-element-interactions -- onerror hides a broken decorative logo (alt=""); it is a load-failure fallback, not a user interaction, and must be inline so it catches images that fail before any delegated listener could attach */}
+                <img src={client.logo} alt="" class="w-8 h-8 rounded client-logo" onerror="this.style.display='none'" />
+                <div class="min-w-0">
+                  <h3 class="font-medium text-white text-sm truncate group-hover:text-blue-400">{client.name}</h3>
+                  <p class="text-xs text-slate-500">{client.company}</p>
+                </div>
+              </div>
+              <div class="flex items-center gap-1.5 mt-2">
+                {client.transports.includes('stdio') && (
+                  <span class="transport-badge bg-green-900/50 text-green-400">stdio</span>
+                )}
+                {(client.transports.includes('sse') || client.transports.includes('streamable-http')) && (
+                  <span class="transport-badge bg-blue-900/50 text-blue-400">HTTP</span>
+                )}
+                {client.beta && (
+                  <span class="transport-badge bg-amber-900/50 text-amber-400">BETA</span>
+                )}
+              </div>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <!-- Section 3: Scope (local vs remote) -->
+      <section class="wizard-section hidden" id="section-scope">
+        <h2 class="section-header">
+          <span class="section-number">3</span>
+          Local or remote access?
+          <span class="selected-badge" id="selected-client"></span>
+        </h2>
+        <div class="grid md:grid-cols-2 gap-4" id="scope-grid">
+          {scopeData.map((scope) => (
+            <button
+              data-scope={scope.id}
+              class="option-card-large scope-option"
+            >
+              <div class="flex items-center gap-2 mb-2">
+                <PlatformIcon icon={scope.icon} size={22} class="text-[var(--text-secondary)]" />
+                <span class="complexity-badge" data-complexity={scope.id === 'local' ? 'quick' : 'advanced'}>
+                  {scope.id === 'local' ? 'Quick' : 'Advanced'}
+                </span>
+              </div>
+              <h3 class="font-semibold text-white mb-1">{scope.name}</h3>
+              <p class="text-sm text-slate-400">{scope.description}</p>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <!-- Shared SVG symbols for architecture diagrams -->
+      <svg class="hidden" aria-hidden="true">
+        <symbol id="icon-computer" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></symbol>
+        <symbol id="icon-server" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M7 20h10M9 16v4M15 16v4"/></symbol>
+        <symbol id="icon-home" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a1 1 0 01-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1h-2z"/></symbol>
+        <symbol id="icon-globe" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></symbol>
+        <symbol id="icon-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></symbol>
+      </svg>
+
+      <!-- Architecture Diagram (shows after connection selected) -->
+      <section class="wizard-section hidden" id="section-architecture">
+        <h2 class="section-header">
+          Architecture Overview
+        </h2>
+
+        <!-- Local Architecture -->
+        <div id="arch-local" class="hidden">
+          <div class="architecture-diagram arch-local-diagram">
+            <div class="arch-row">
+              <div class="arch-box arch-client">
+                <div class="arch-icon"><svg width="18" height="18"><use href="#icon-computer"/></svg></div>
+                <div class="arch-label">Your Computer</div>
+                <div class="arch-sublabel">AI Client + ha-mcp</div>
+              </div>
+              <div class="arch-arrow-section">
+                <div class="arch-arrow">→</div>
+                <div class="arch-transport-label">HTTP/HTTPS*</div>
+              </div>
+              <div class="arch-box arch-ha">
+                <div class="arch-icon"><svg width="18" height="18"><use href="#icon-home"/></svg></div>
+                <div class="arch-label">Home Assistant</div>
+                <div class="arch-sublabel">API</div>
+              </div>
+            </div>
+            <div class="arch-boundary arch-local-boundary">
+              <span>Local / Remote Network</span>
+            </div>
+          </div>
+          <p class="text-slate-400 text-sm mt-4 text-center">ha-mcp runs as a subprocess on your computer, connecting directly to Home Assistant.</p>
+          <p class="text-amber-400/70 text-xs mt-2 text-center">* HTTPS recommended for remote networks</p>
+        </div>
+
+        <!-- Network Architecture -->
+        <div id="arch-network" class="hidden">
+          <div class="architecture-diagram">
+            <div class="arch-row">
+              <div class="arch-col">
+                <div class="arch-box arch-client arch-small">
+                  <div class="arch-icon"><svg width="18" height="18"><use href="#icon-computer"/></svg></div>
+                  <div class="arch-label">Desktop</div>
+                </div>
+                <div class="arch-box arch-client arch-small mt-2">
+                  <div class="arch-icon"><svg width="18" height="18"><use href="#icon-computer"/></svg></div>
+                  <div class="arch-label">Laptop</div>
+                </div>
+              </div>
+              <div class="arch-arrow-section">
+                <div class="arch-arrow">→</div>
+                <div class="arch-transport-label">HTTP*</div>
+              </div>
+              <div class="arch-box arch-server">
+                <div class="arch-icon"><svg width="18" height="18"><use href="#icon-server"/></svg></div>
+                <div class="arch-label">ha-mcp Server</div>
+              </div>
+              <div class="arch-arrow">→</div>
+              <div class="arch-box arch-ha">
+                <div class="arch-icon"><svg width="18" height="18"><use href="#icon-home"/></svg></div>
+                <div class="arch-label">Home Assistant</div>
+              </div>
+            </div>
+            <div class="arch-boundary arch-local-boundary">
+              <span>Local Network (LAN)</span>
+            </div>
+          </div>
+          <p class="text-slate-400 text-sm mt-4 text-center">The ha-mcp server runs in or beside Home Assistant and listens on your local network. Multiple clients can connect.</p>
+          <p class="text-amber-400/70 text-xs mt-2 text-center">* Should not be exposed externally (No HTTPS). Use Remote for internet access.</p>
+        </div>
+
+        <!-- Remote Architecture -->
+        <div id="arch-remote" class="hidden">
+          <div class="architecture-diagram arch-remote-diagram">
+            <div class="arch-row arch-row-top">
+              <div class="arch-box arch-client">
+                <div class="arch-icon"><svg width="18" height="18"><use href="#icon-globe"/></svg></div>
+                <div class="arch-label">AI Client</div>
+                <div class="arch-sublabel">Anywhere</div>
+              </div>
+              <div class="arch-arrow-section">
+                <div class="arch-arrow">→</div>
+                <div class="arch-internet-label">HTTPS</div>
+              </div>
+              <div class="arch-network-boundary">
+                <div class="arch-network-row">
+                  <div class="arch-box arch-proxy arch-gateway-overlap">
+                    <div class="arch-icon"><svg width="18" height="18"><use href="#icon-lock"/></svg></div>
+                    <div class="arch-label">Reverse Proxy</div>
+                    <div class="arch-sublabel">SSL Certificate</div>
+                  </div>
+                  <div class="arch-arrow-section">
+                    <div class="arch-arrow">→</div>
+                    <div class="arch-transport-label">HTTP</div>
+                  </div>
+                  <div class="arch-box arch-server arch-small">
+                    <div class="arch-icon"><svg width="18" height="18"><use href="#icon-server"/></svg></div>
+                    <div class="arch-label">ha-mcp</div>
+                    <div class="arch-sublabel">Secret URL</div>
+                  </div>
+                  <div class="arch-arrow">→</div>
+                  <div class="arch-box arch-ha arch-small">
+                    <div class="arch-icon"><svg width="18" height="18"><use href="#icon-home"/></svg></div>
+                    <div class="arch-label">Home Assistant</div>
+                  </div>
+                </div>
+                <div class="arch-boundary-label">Your Network</div>
+              </div>
+            </div>
+          </div>
+          <p class="text-slate-400 text-sm mt-4 text-center">Access from anywhere via secure HTTPS tunnel. Required for ChatGPT, Claude.ai web clients.</p>
+        </div>
+      </section>
+
+      <!-- Section 4: Platform (only when OS-specific commands are needed) -->
+      <section class="wizard-section hidden" id="section-platform">
+        <h2 class="section-header">
+          <span class="section-number" id="platform-step-num">4</span>
+          Select Your Platform
+          <span class="selected-badge" id="selected-platform-prev"></span>
+        </h2>
+        <p class="text-slate-400 text-sm mb-4" id="platform-help">Choose how to run ha-mcp on your machine.</p>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4" id="platform-grid">
+          {platformsData.map((platform) => (
+            <button
+              data-platform={platform.id}
+              class="option-card-large"
+            >
+              <div class="mb-2 text-[var(--text-secondary)]">
+                <PlatformIcon icon={platform.icon} size={28} />
+              </div>
+              <h3 class="font-semibold text-white">{platform.name}</h3>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <!-- Section 5: Remote Path (only when scope = remote) -->
+      <section class="wizard-section hidden" id="section-remote-path">
+        <h2 class="section-header">
+          <span class="section-number" id="remotepath-step-num">5</span>
+          How will clients reach it remotely?
+          <span class="selected-badge" id="selected-remotepath-prev"></span>
+        </h2>
+        <p class="text-slate-400 text-sm mb-4">Expose your MCP server securely to the internet</p>
+        <div class="grid md:grid-cols-3 gap-4" id="remote-path-grid">
+          <!-- HA Custom Component only -->
+          <button data-remote-path="builtin-webhook" class="option-card-large hidden">
+            <div class="flex items-center gap-2 mb-2">
+              <PlatformIcon icon="webhook" size={22} class="text-[var(--text-secondary)]" />
+              <span class="complexity-badge" data-complexity="quick">Quick</span>
+            </div>
+            <h3 class="font-semibold text-white">Built-in webhook</h3>
+            <p class="text-sm text-slate-400">Nabu Casa or an existing reverse proxy — no extra setup</p>
+          </button>
+          <!-- HA app (add-on) only -->
+          <button data-remote-path="webhook-proxy" class="option-card-large hidden">
+            <div class="flex items-center gap-2 mb-2">
+              <PlatformIcon icon="home" size={22} class="text-[var(--text-secondary)]" />
+              <span class="complexity-badge" data-complexity="quick">Quick</span>
+            </div>
+            <h3 class="font-semibold text-white">Nabu Casa / Webhook Proxy</h3>
+            <p class="text-sm text-slate-400">Uses your existing HA reverse proxy</p>
+          </button>
+          <button data-remote-path="cloudflared" class="option-card-large hidden">
+            <div class="flex items-center gap-2 mb-2">
+              <PlatformIcon icon="cloud" size={22} class="text-[var(--text-secondary)]" />
+              <span class="complexity-badge" data-complexity="advanced">Advanced</span>
+            </div>
+            <h3 class="font-semibold text-white">Cloudflare Tunnel</h3>
+            <p class="text-sm text-slate-400">Free, no port forwarding needed</p>
+          </button>
+          <button data-remote-path="custom" class="option-card-large hidden">
+            <div class="flex items-center gap-2 mb-2">
+              <PlatformIcon icon="wrench" size={22} class="text-[var(--text-secondary)]" />
+              <span class="complexity-badge" data-complexity="advanced">Advanced</span>
+            </div>
+            <h3 class="font-semibold text-white">Custom Reverse Proxy</h3>
+            <p class="text-sm text-slate-400">Caddy, Nginx, Traefik, etc.</p>
+          </button>
+        </div>
+      </section>
+
+      <!-- Section 6: Configuration Output -->
+      <section class="wizard-section hidden" id="section-config">
+        <h2 class="section-header">
+          <span class="section-number" id="config-step-num">4</span>
+          Your Configuration
+          <span class="selected-badge" id="selected-final"></span>
+        </h2>
+
+        <!-- Summary -->
+        <div class="bg-slate-800/50 rounded-xl border border-slate-700 p-4 mb-6">
+          <div class="flex flex-wrap gap-2 text-sm" id="config-summary">
+            <!-- Filled by JS -->
+          </div>
+        </div>
+
+        <!-- Setup Instructions -->
+        <div id="setup-instructions" class="mb-6 space-y-4">
+          <!-- Filled by JS -->
+        </div>
+
+        <!-- Configuration -->
+        <div class="mb-6" id="config-section">
+          <div class="mb-2">
+            <h3 class="text-sm font-semibold text-slate-400 uppercase tracking-wider">Client Configuration</h3>
+          </div>
+          <pre id="config-output" class="text-sm bg-slate-900/50 p-4 rounded-lg overflow-x-auto border border-slate-700"><code></code></pre>
+        </div>
+
+        <!-- Environment Variables -->
+        <div class="bg-amber-900/20 border border-amber-700/50 rounded-xl p-4 mb-6">
+          <h3 class="font-medium text-amber-300 mb-2">Replace these placeholders (delete the surrounding <code class="bg-amber-900/30 px-1 rounded">{{ }}</code> braces too):</h3>
+          <ul class="text-sm text-amber-200/80 space-y-1" id="replace-hints">
+            <!-- Filled by JS -->
+          </ul>
+        </div>
+
+        <!-- Additional Notes -->
+        <div id="config-notes" class="text-sm text-slate-400">
+          <!-- Filled by JS -->
+        </div>
+
+        <div class="mt-6 text-center">
+          <button id="start-over" class="px-4 py-2 text-blue-400 hover:text-blue-300 hover:bg-blue-900/20 rounded-lg transition-colors">
+            ← Start Over
+          </button>
+        </div>
+      </section>
+
+      <!-- Scroll spacer to allow last sections to scroll to top -->
+      <div class="scroll-spacer" aria-hidden="true"></div>
+    </div>
+
+    <!-- Demo server (local stdio) — relocated OS quick-install cards; ids preserved for external anchors -->
+    <section class="mt-12" aria-labelledby="demo-server-heading">
+      <h2 id="demo-server-heading" class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-800 text-slate-300 text-sm mb-4">
+        <span class="inline-flex rounded-full h-2 w-2 bg-slate-500"></span>
+        Demo server (local stdio)
+      </h2>
+      <p class="text-slate-500 text-sm mb-4">Prefer to run ha-mcp locally over stdio, or just try the public demo Home Assistant? These per-OS walkthroughs cover it. stdio has known transport issues; not recommended for a permanent setup.</p>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-3xl items-start">
+        <details id="easy-macos" class="qs-details group">
+          <summary class="quick-start-card">
+            <div class="flex items-center gap-4">
+              <PlatformIcon icon="apple" size={40} class="text-[var(--text-secondary)]" />
+              <div class="text-left">
+                <h3 class="text-lg font-semibold text-white group-hover:text-blue-400">macOS</h3>
+                <p class="text-slate-400">Local or the Home Assistant App</p>
+              </div>
+            </div>
+            <span class="quick-start-badge">Demo server</span>
+          </summary>
+          <div class="qs-branch">
+            <a href={withBase('/guide-addon')} class="qs-option qs-option-rec">
+              <span class="inline-block mb-1 px-2 py-0.5 text-xs rounded-full bg-green-900/30 text-green-400 font-medium">Recommended</span>
+              <span class="block font-semibold text-white">Home Assistant app (add-on)</span>
+              <span class="block text-sm text-slate-400">Local or remote &middot; no access token</span>
+            </a>
+            <a href={withBase('/guide-macos')} class="qs-option">
+              <span class="block font-semibold text-white">Local install (stdio)</span>
+              <span class="block text-sm text-slate-400">Local machine only &middot; needs a long-lived token</span>
+            </a>
+          </div>
+        </details>
+        <details id="easy-linux" class="qs-details group">
+          <summary class="quick-start-card">
+            <div class="flex items-center gap-4">
+              <PlatformIcon icon="linux" size={40} class="text-[var(--text-secondary)]" />
+              <div class="text-left">
+                <h3 class="text-lg font-semibold text-white group-hover:text-blue-400">Linux</h3>
+                <p class="text-slate-400">Local or the Home Assistant App</p>
+              </div>
+            </div>
+            <span class="quick-start-badge">Demo server</span>
+          </summary>
+          <div class="qs-branch">
+            <a href={withBase('/guide-addon')} class="qs-option qs-option-rec">
+              <span class="inline-block mb-1 px-2 py-0.5 text-xs rounded-full bg-green-900/30 text-green-400 font-medium">Recommended</span>
+              <span class="block font-semibold text-white">Home Assistant app (add-on)</span>
+              <span class="block text-sm text-slate-400">Local or remote &middot; no access token</span>
+            </a>
+            <a href={withBase('/guide-linux')} class="qs-option">
+              <span class="block font-semibold text-white">Local install (stdio)</span>
+              <span class="block text-sm text-slate-400">Claude Desktop or Claude Code &middot; needs a long-lived token</span>
+            </a>
+          </div>
+        </details>
+        <details id="easy-windows" class="qs-details group">
+          <summary class="quick-start-card">
+            <div class="flex items-center gap-4">
+              <PlatformIcon icon="windows" size={40} class="text-[var(--text-secondary)]" />
+              <div class="text-left">
+                <h3 class="text-lg font-semibold text-white group-hover:text-blue-400">Windows</h3>
+                <p class="text-slate-400">Local or the Home Assistant App</p>
+              </div>
+            </div>
+            <span class="quick-start-badge">Demo server</span>
+          </summary>
+          <div class="qs-branch">
+            <a href={withBase('/guide-addon')} class="qs-option qs-option-rec">
+              <span class="inline-block mb-1 px-2 py-0.5 text-xs rounded-full bg-green-900/30 text-green-400 font-medium">Recommended</span>
+              <span class="block font-semibold text-white">Home Assistant app (add-on)</span>
+              <span class="block text-sm text-slate-400">Local or remote &middot; no access token</span>
+            </a>
+            <a href={withBase('/guide-windows')} class="qs-option">
+              <span class="block font-semibold text-white">Local install (stdio)</span>
+              <span class="block text-sm text-slate-400">Local machine only &middot; needs a long-lived token</span>
+            </a>
+          </div>
+        </details>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="mt-12 text-center text-slate-500 text-sm">
+      <p>
+        <a href="https://github.com/homeassistant-ai/ha-mcp" class="hover:text-slate-300">GitHub</a>
+        ·
+        <a href="https://github.com/homeassistant-ai/ha-mcp/issues" class="hover:text-slate-300">Issues</a>
+      </p>
+    </footer>
+  </div>
+  </main>
+</Layout>
+
+<style>
+  /* Smooth scroll behavior */
+  html {
+    scroll-behavior: smooth;
+  }
+
+  .wizard-section {
+    @apply bg-slate-800/30 rounded-xl border border-slate-700/50 p-5;
+    scroll-margin-top: 5rem; /* Account for sticky nav */
+  }
+
+  /* Spacer to allow last sections to scroll to consistent position */
+  .scroll-spacer {
+    height: 60vh;
+    pointer-events: none;
+  }
+
+  /* Quick Start Cards */
+  .quick-start-card {
+    @apply relative pt-10 pb-6 px-6 rounded-2xl border-2 border-green-700/50 bg-gradient-to-br from-green-900/20 to-slate-800/50 hover:border-green-500 hover:from-green-900/30 transition-all text-left cursor-pointer block no-underline;
+  }
+  .quick-start-card:hover {
+    @apply shadow-xl shadow-green-900/30 scale-[1.02];
+  }
+  .quick-start-card:hover h3 {
+    @apply text-blue-400;
+  }
+  .quick-start-badge {
+    @apply absolute top-2 right-2 px-3 py-1 text-xs rounded-full bg-green-700 text-white font-medium;
+  }
+  /* Easy-Setup cards expand (native <details>) into a Local-vs-App choice. */
+  .qs-details > summary {
+    @apply list-none cursor-pointer;
+  }
+  .qs-details > summary::-webkit-details-marker { display: none; }
+  .qs-branch {
+    @apply mt-3 grid gap-2;
+  }
+  .qs-option {
+    @apply block rounded-xl border-2 border-slate-700 bg-slate-800/40 px-4 py-3 no-underline transition-colors;
+  }
+  .qs-option:hover { @apply border-slate-500; }
+  .qs-option-rec {
+    @apply border-green-700/50 bg-green-900/20;
+  }
+  .qs-option-rec:hover { @apply border-green-500; }
+
+  .section-header {
+    @apply text-lg font-semibold text-white mb-4 flex items-center gap-3 flex-wrap;
+  }
+  .section-number {
+    @apply w-7 h-7 rounded-full bg-blue-600 text-white text-sm flex items-center justify-center flex-shrink-0;
+  }
+  .selected-badge {
+    @apply px-3 py-1 rounded-full bg-green-900/50 text-green-400 text-sm font-normal cursor-pointer hover:bg-green-900/70 transition-colors;
+  }
+  .selected-badge:empty {
+    @apply hidden;
+  }
+  .option-card {
+    @apply p-3 rounded-xl border border-slate-700 bg-slate-800/50 hover:bg-slate-700/50 hover:border-blue-500 transition-all text-left cursor-pointer;
+  }
+  .option-card.selected {
+    @apply ring-2 ring-blue-500 bg-blue-900/20;
+  }
+  .option-card:disabled {
+    @apply opacity-40 cursor-not-allowed hover:border-slate-700 hover:bg-slate-800/50;
+  }
+  .option-card-large {
+    @apply p-5 rounded-xl border border-slate-700 bg-slate-800/50 hover:bg-slate-700/50 hover:border-blue-500 transition-all text-left cursor-pointer;
+  }
+  .option-card-large.selected {
+    @apply ring-2 ring-blue-500 bg-blue-900/20;
+  }
+  .option-card-large:disabled {
+    @apply opacity-40 cursor-not-allowed hover:border-slate-700 hover:bg-slate-800/50;
+  }
+  .transport-badge {
+    @apply px-1.5 py-0.5 text-xs rounded;
+  }
+  .complexity-badge {
+    @apply px-2 py-0.5 text-xs rounded-full bg-slate-700/50 text-slate-300;
+  }
+  .complexity-badge[data-complexity="quick"] {
+    @apply bg-green-900/30 text-green-400;
+  }
+  .complexity-badge[data-complexity="complex"] {
+    @apply bg-yellow-900/30 text-yellow-400;
+  }
+  .complexity-badge[data-complexity="advanced"] {
+    @apply bg-red-900/30 text-red-400;
+  }
+  .instruction-block {
+    @apply bg-slate-800/50 rounded-xl p-4 border border-slate-700;
+  }
+  .instruction-title {
+    @apply font-medium text-white mb-2 flex items-center gap-2;
+  }
+  .code-block {
+    @apply bg-slate-900/50 p-3 rounded text-sm overflow-x-auto;
+  }
+
+  /* Architecture Diagram Styles */
+  .architecture-diagram {
+    @apply relative bg-slate-900/50 rounded-xl p-6 border border-slate-700/50;
+  }
+  .arch-row {
+    @apply flex items-center justify-center gap-4 flex-wrap;
+  }
+  .arch-col {
+    @apply flex flex-col items-center;
+  }
+  .arch-box {
+    @apply bg-slate-800 rounded-xl p-4 border border-slate-600 text-center min-w-[120px];
+  }
+  .arch-box.arch-small {
+    @apply p-3 min-w-[100px];
+  }
+  .arch-client {
+    @apply border-blue-600/50 bg-blue-900/20;
+  }
+  .arch-server {
+    @apply border-purple-600/50 bg-purple-900/20;
+  }
+  .arch-ha {
+    @apply border-cyan-600/50 bg-cyan-900/20;
+  }
+  .arch-proxy {
+    @apply border-amber-600/50 bg-amber-900/20;
+  }
+  .arch-icon {
+    @apply mb-1;
+  }
+  .arch-label {
+    @apply text-white font-medium text-sm;
+  }
+  .arch-sublabel {
+    @apply text-slate-400 text-xs mt-1;
+  }
+  .arch-arrow {
+    @apply text-2xl text-slate-500 font-bold;
+  }
+  .arch-arrow-down {
+    @apply text-xl text-slate-500 font-bold my-1;
+  }
+  .arch-arrow-section {
+    @apply flex flex-col items-center;
+  }
+  .arch-transport-label {
+    @apply text-xs text-slate-400 mt-1;
+  }
+  .arch-internet-label {
+    @apply text-xs text-amber-400 mt-1;
+  }
+  /* Remote diagram - network boundary with gateway overlap */
+  .arch-row-top {
+    @apply items-center;
+  }
+  .arch-network-boundary {
+    @apply relative border-2 border-dashed border-green-700/50 rounded-xl p-4 pl-14 ml-4;
+  }
+  .arch-network-row {
+    @apply flex items-center gap-2;
+  }
+  .arch-gateway-overlap {
+    @apply -ml-14;
+  }
+  /* Local diagram needs more padding for boundary label */
+  .arch-local-diagram {
+    @apply pb-8;
+  }
+  .arch-boundary {
+    @apply absolute inset-4 border-2 border-dashed rounded-xl pointer-events-none flex items-end justify-center pb-1;
+  }
+  .arch-local-diagram .arch-boundary {
+    @apply inset-3;
+  }
+  .arch-boundary span {
+    @apply text-xs px-2 py-0.5 rounded bg-slate-800;
+  }
+  .arch-local-boundary {
+    @apply border-green-700/50;
+  }
+  .arch-local-boundary span {
+    @apply text-green-400;
+  }
+  .arch-boundary-label {
+    @apply absolute -bottom-3 left-1/2 -translate-x-1/2 text-xs px-2 py-0.5 rounded bg-slate-900 text-green-400 whitespace-nowrap;
+  }
+
+  /* Hover Preview Styles */
+  .arch-preview {
+    @apply bg-slate-900/50 rounded-lg p-4 border border-slate-700/50;
+  }
+  .arch-preview-row {
+    @apply flex items-center justify-center gap-2 flex-wrap text-sm;
+  }
+  .arch-preview-box {
+    @apply px-3 py-2 rounded-lg text-center text-xs;
+  }
+  .arch-preview-client {
+    @apply bg-blue-900/30 border border-blue-600/30 text-blue-300;
+  }
+  .arch-preview-server {
+    @apply bg-purple-900/30 border border-purple-600/30 text-purple-300;
+  }
+  .arch-preview-ha {
+    @apply bg-cyan-900/30 border border-cyan-600/30 text-cyan-300;
+  }
+  .arch-preview-proxy {
+    @apply bg-amber-900/30 border border-amber-600/30 text-amber-300;
+  }
+  .arch-preview-arrow {
+    @apply text-slate-500 text-center;
+  }
+  .arch-preview small {
+    @apply text-slate-500 text-[10px];
+  }
+</style>
+
+<script>
+  import { initSetupWizard } from '../scripts/setup-wizard/wizard';
+  initSetupWizard();
+</script>

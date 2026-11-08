@@ -1,0 +1,106 @@
+name: Home Assistant Add-on Publish
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/${{ github.repository }}-addon
+jobs:
+  build-addon:
+    name: Build Add-on Image (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        arch:
+        - amd64
+        include:
+        - arch: amd64
+          platform: linux/amd64
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        submodules: true
+        ref: ${{ inputs.version && format('v{0}', inputs.version) || github.sha }}
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
+    - name: Log in to GitHub Container Registry
+      uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    - name: Resolve version
+      id: version
+      run: "if [ -n \"${{ inputs.version }}\" ]; then\n  VERSION=\"${{ inputs.version }}\"\nelse\n  VERSION=$(grep '^version:'\
+        \ homeassistant-addon/config.yaml | sed 's/version: \"\\(.*\\)\"/\\1/')\nfi\necho \"version=$VERSION\" >> $GITHUB_OUTPUT\n\
+        echo \"Add-on version: $VERSION\"\n"
+    - name: Build and push Docker image
+      uses: ./.github/actions/docker-build-python-base-fallback
+      with:
+        context: .
+        file: ./homeassistant-addon/Dockerfile
+        push: true
+        platforms: linux/amd64
+        tags: '${{ env.IMAGE_PREFIX }}-${{ matrix.arch }}:latest
+
+          ${{ env.IMAGE_PREFIX }}-${{ matrix.arch }}:${{ steps.version.outputs.version }}
+
+          '
+        labels: 'io.hass.name=Home Assistant MCP Server
+
+          io.hass.description=AI assistant integration via Model Context Protocol
+
+          io.hass.version=${{ steps.version.outputs.version }}
+
+          io.hass.type=addon
+
+          io.hass.arch=${{ matrix.arch }}
+
+          '
+        cache-from: type=gha,scope=${{ matrix.arch }}
+        cache-to: type=gha,mode=max,scope=${{ matrix.arch }},ignore-error=true
+        build-args: 'BUILD_VERSION=${{ steps.version.outputs.version }}
+
+          BUILD_ARCH=${{ matrix.arch }}
+
+          '
+    if: ${{ vars.QA_ARMED == 'true' && github.sha != vars.QA_BOOTSTRAP_SHA && (true) }}
+  qa_receipt:
+    name: QA workflow receipt
+    needs:
+    - build-addon
+    if: ${{ always() && vars.QA_ARMED == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        ref: ${{ github.workflow_sha }}
+    - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
+      with:
+        version: 0.13.4
+    - run: uv run -s .qa/runtime.py receipt
+      env:
+        QA_NEEDS: ${{ toJSON(needs) }}
+        QA_STAGE: ${{ vars.QA_STAGE }}
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: qa-workflow-receipt
+        path: qa-workflow-receipt.json
+        retention-days: 30
+'on':
+  workflow_call:
+    inputs:
+      version:
+        description: Add-on version to publish
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version override (leave empty to use config.yaml)
+        required: false
+        type: string

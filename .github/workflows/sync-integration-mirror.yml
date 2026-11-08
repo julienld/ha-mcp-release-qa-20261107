@@ -1,0 +1,237 @@
+name: Sync Integration Mirror
+permissions:
+  contents: read
+concurrency:
+  group: mirror-sync
+  cancel-in-progress: false
+  queue: max
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    outputs:
+      channel: ${{ steps.decide.outputs.channel }}
+      dev_run: ${{ steps.decide.outputs.dev_run }}
+    steps:
+    - name: Pick the leg from the trigger
+      id: decide
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        EVENT: ${{ github.event_name }}
+        DISPATCH_CHANNEL: ${{ inputs.channel }}
+        TRIGGER_WORKFLOW: ${{ github.event.workflow_run.name }}
+        TRIGGER_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+        TRIGGER_RUN_ID: ${{ github.event.workflow_run.id }}
+        TRIGGER_BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
+      run: "if [ \"$TRIGGER_BRANCH\" != master ]; then\n  echo \"::warning::Ignoring a run from ${TRIGGER_BRANCH}; the mirror\
+        \ follows master only.\"\n  echo \"channel=skip\" >> \"$GITHUB_OUTPUT\"\n  exit 0\nfi\ncase \"$EVENT\" in\n  push)\
+        \ echo \"channel=none\" >> \"$GITHUB_OUTPUT\"; exit 0 ;;\n  workflow_dispatch)\n    if [ \"$DISPATCH_CHANNEL\" = stable\
+        \ ]; then\n      echo \"channel=stable\" >> \"$GITHUB_OUTPUT\"\n      exit 0\n    fi\n    # A dev dispatch pins the\
+        \ build Publish Dev Channel made of this\n    # very commit; there is none for a docs-only commit it skipped.\n  \
+        \  TRIGGER_RUN_ID=$(gh api \\\n      \"repos/${{ github.repository }}/actions/workflows/publish-dev.yml/runs?head_sha=${GITHUB_SHA}&per_page=1\"\
+        \ \\\n      --jq '.workflow_runs[0].id // empty')\n    if [ -z \"$TRIGGER_RUN_ID\" ]; then\n      echo \"::error::Publish\
+        \ Dev Channel never built ${GITHUB_SHA}; nothing to pin.\"\n      exit 1\n    fi\n    TRIGGER_WORKFLOW=\"Publish Dev\
+        \ Channel\"\n    ;;\nesac\nif [ \"$TRIGGER_CONCLUSION\" = \"skipped\" ]; then\n  echo \"Triggering run was skipped\
+        \ in its entirety - nothing to sync.\"\n  echo \"channel=skip\" >> \"$GITHUB_OUTPUT\"\n  exit 0\nfi\nif [ \"$TRIGGER_WORKFLOW\"\
+        \ = \"SemVer Release\" ]; then\n  job=\"Semantic Release\"; leg=stable\nelse\n  job=\"Publish PyPI (dev channel)\"\
+        ; leg=dev\nfi\nif ! conclusion=$(gh api \\\n  \"repos/${{ github.repository }}/actions/runs/${TRIGGER_RUN_ID}/jobs?per_page=100\"\
+        \ \\\n  --jq \"[.jobs[] | select(.name == \\\"$job\\\") | .conclusion] | first // empty\"); then\n  if [ \"$leg\"\
+        \ = stable ]; then\n    echo \"::warning::Could not query the triggering run's jobs; failing open.\"\n    echo \"\
+        channel=stable\" >> \"$GITHUB_OUTPUT\"\n  elif [ \"$EVENT\" = workflow_dispatch ]; then\n    # A maintainer asked\
+        \ for this pre-release: fail and say why.\n    echo \"::error::Could not query Publish Dev Channel run ${TRIGGER_RUN_ID}'s\
+        \ jobs.\"\n    exit 1\n  else\n    echo \"::warning::Could not query the triggering run's jobs; skipping this dev\
+        \ build.\"\n    echo \"channel=skip\" >> \"$GITHUB_OUTPUT\"\n  fi\n  exit 0\nfi\necho \"'$job' conclusion: ${conclusion:-<job\
+        \ absent>}\"\nif [ \"$conclusion\" = success ] || { [ \"$leg\" = stable ] && [ -z \"$conclusion\" ]; }; then\n  echo\
+        \ \"channel=$leg\" >> \"$GITHUB_OUTPUT\"\n  echo \"dev_run=$TRIGGER_RUN_ID\" >> \"$GITHUB_OUTPUT\"\nelif [ \"$EVENT\"\
+        \ = workflow_dispatch ]; then\n  echo \"::error::'$job' in Publish Dev Channel run ${TRIGGER_RUN_ID} is ${conclusion:-absent},\
+        \ not success; no dev build to pin.\"\n  exit 1\nelse\n  echo \"channel=skip\" >> \"$GITHUB_OUTPUT\"\nfi\n"
+    if: ${{ vars.QA_ARMED == 'true' && github.sha != vars.QA_BOOTSTRAP_SHA && (true) }}
+  sync:
+    needs: gate
+    if: needs.gate.outputs.channel != 'skip'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    env:
+      CHANNEL: ${{ needs.gate.outputs.channel }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        fetch-depth: 0
+        fetch-tags: true
+    - name: Fetch the dev build's version
+      if: env.CHANNEL == 'dev'
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+      with:
+        name: dev-version
+        path: ${{ runner.temp }}/dev-version
+        run-id: ${{ needs.gate.outputs.dev_run }}
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+    - name: Resolve the release this run publishes
+      id: release
+      env:
+        TRIGGER_SHA: ${{ github.event.workflow_run.head_sha }}
+      run: "case \"$CHANNEL\" in\n  stable)\n    # The release semantic-release cut from the triggering commit is\n    # the\
+        \ first stable tag that contains it; the newest tag could be\n    # a later release when this run waited in the queue.\
+        \ A recovery\n    # dispatch has no trigger and re-tags the newest. That commit\n    # carries the stamped manifest:\
+        \ snapshot ITS component, not\n    # master's tip. A separate worktree keeps this workflow's own\n    # scripts: a\
+        \ recovery dispatch may target an older tag.\n    stable_tags() { grep -E '^v[0-9]+\\.[0-9]+\\.[0-9]+$' | sort -V;\
+        \ }\n    VER=\"\"\n    if [ -n \"$TRIGGER_SHA\" ]; then\n      VER=$(git tag -l 'v*' --contains \"$TRIGGER_SHA\" |\
+        \ stable_tags | head -n 1)\n    fi\n    if [ -z \"$VER\" ]; then\n      VER=$(git tag -l 'v*' | stable_tags | tail\
+        \ -n 1)\n    fi\n    VER=\"${VER#v}\"\n    SRC=\"$RUNNER_TEMP/release-src\"\n    git worktree add --quiet --detach\
+        \ \"$SRC\" \"v${VER}\"\n    PIN=\"$VER\"\n    TAG=\"v${VER}\"\n    DIST=ha-mcp\n    ;;\n  dev)\n    # Publish Dev\
+        \ Channel uploaded this commit as ha-mcp-dev; pin the\n    # version it uploaded, not a recomputed one.\n    PIN=$(cat\
+        \ \"$RUNNER_TEMP/dev-version/dev-version.txt\")\n    if ! [[ \"$PIN\" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+\\.dev[0-9]+$ ]];\
+        \ then\n      echo \"::error::The dev build reported '${PIN}', not a dev version.\"\n      exit 1\n    fi\n    VER=\"\
+        ${PIN%.dev*}\"\n    TAG=\"v${VER}-dev.${PIN##*.dev}\"\n    DIST=ha-mcp-dev\n    # Snapshot the commit Publish Dev\
+        \ Channel built, not whatever\n    # master has moved on to since; a dispatch builds this commit.\n    if [ -n \"\
+        $TRIGGER_SHA\" ]; then\n      SRC=\"$RUNNER_TEMP/dev-src\"\n      git worktree add --quiet --detach \"$SRC\" \"$TRIGGER_SHA\"\
+        \n    else\n      SRC=.\n    fi\n    ;;\n  *)\n    exit 0\n    ;;\nesac\necho \"Component ${VER}, ${DIST}==${PIN},\
+        \ tag ${TAG}\"\n{\n  echo \"version=$VER\"\n  echo \"pin=$PIN\"\n  echo \"dist=$DIST\"\n  echo \"src=$SRC\"\n  echo\
+        \ \"tag=$TAG\"\n} >> \"$GITHUB_OUTPUT\"\n"
+    - name: Set up mirror push key
+      env:
+        DEPLOY_KEY: ${{ secrets.INTEGRATION_MIRROR_DEPLOY_KEY }}
+      run: 'mkdir -p ~/.ssh
+
+        printf -- "%s\n" "$DEPLOY_KEY" > ~/.ssh/mirror_key
+
+        chmod 600 ~/.ssh/mirror_key
+
+        ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+
+        '
+    - name: Clone mirror
+      env:
+        GIT_SSH_COMMAND: ssh -i ~/.ssh/mirror_key -o IdentitiesOnly=yes
+      run: 'git clone --depth 1 git@github.com:julienld/ha-mcp-mirror-qa-20261107.git /tmp/mirror
+
+        '
+    - name: Stage snapshot
+      env:
+        VER: ${{ steps.release.outputs.version }}
+        PIN: ${{ steps.release.outputs.pin }}
+        DIST: ${{ steps.release.outputs.dist }}
+        SRC: ${{ steps.release.outputs.src }}
+      run: "if [ \"$CHANNEL\" = none ]; then\n  # A docs-only push refreshes the README and repo files; the\n  # component\
+        \ stays exactly as the last tagged sync left it.\n  cp hacs.json LICENSE /tmp/mirror/\nelse\n  # From the snapshot,\
+        \ so hacs.json's Home Assistant minimum always\n  # matches the component it ships with.\n  cp \"$SRC/hacs.json\"\
+        \ \"$SRC/LICENSE\" /tmp/mirror/\n  rm -rf /tmp/mirror/custom_components\n  mkdir -p /tmp/mirror/custom_components\n\
+        \  cp -r \"$SRC/custom_components/ha_mcp_tools\" /tmp/mirror/custom_components/\n  rm -rf /tmp/mirror/custom_components/ha_mcp_tools/__pycache__\n\
+        \  # main takes master's component as is, like this repository's\n  # master; a dev build's stamp goes on a commit\
+        \ only its tag names.\n  if [ \"$CHANNEL\" = stable ]; then\n    python3 scripts/stamp_component_version.py \\\n \
+        \     --component-dir /tmp/mirror/custom_components/ha_mcp_tools \\\n      --version \"$VER\" --pin \"$PIN\" --dist\
+        \ \"$DIST\"\n  fi\nfi\npython3 scripts/build_mirror_readme.py \\\n  --prefix .github/integration-mirror-readme-prefix.md\
+        \ \\\n  --readme README.md \\\n  --out /tmp/mirror/README.md\n# Deploy keys can push workflow files (unlike a PAT,\
+        \ they aren't\n# subject to the `workflow` scope restriction), and the mirror\n# carries no hand-made changes, so\
+        \ its release-on-tag.yml is\n# synced from here too rather than hand-edited in the mirror.\nmkdir -p /tmp/mirror/.github/workflows\n\
+        cp .github/integration-mirror-workflows/release-on-tag.yml \\\n  /tmp/mirror/.github/workflows/release-on-tag.yml\n"
+    - name: Commit and push
+      env:
+        GIT_SSH_COMMAND: ssh -i ~/.ssh/mirror_key -o IdentitiesOnly=yes
+        SOURCE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+      run: "cd /tmp/mirror\ngit config user.name \"github-actions[bot]\"\ngit config user.email \"github-actions[bot]@users.noreply.github.com\"\
+        \ngit add -A\nif git diff --cached --quiet; then\n  echo \"mirror already current\"\nelse\n  git commit -m \"Component\
+        \ snapshot from ${GITHUB_REPOSITORY}@${SOURCE_SHA} (${CHANNEL})\"\n  git push origin main\nfi\n"
+    - name: Stamp the dev snapshot
+      if: env.CHANNEL == 'dev'
+      env:
+        VER: ${{ steps.release.outputs.version }}
+        PIN: ${{ steps.release.outputs.pin }}
+        DIST: ${{ steps.release.outputs.dist }}
+        SOURCE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+      run: "python3 scripts/stamp_component_version.py \\\n  --component-dir /tmp/mirror/custom_components/ha_mcp_tools \\\
+        \n  --version \"$VER\" --pin \"$PIN\" --dist \"$DIST\"\ncd /tmp/mirror\ngit commit -qam \"Component snapshot from\
+        \ ${GITHUB_REPOSITORY}@${SOURCE_SHA} (dev ${PIN})\"\n"
+    - name: Wait for the pinned server build on PyPI
+      if: env.CHANNEL == 'stable' || env.CHANNEL == 'dev'
+      env:
+        PIN: ${{ steps.release.outputs.pin }}
+        DIST: ${{ steps.release.outputs.dist }}
+      run: "for _ in $(seq 1 60); do\n  if curl -fsS -o /dev/null \"https://julienld.github.io/ha-mcp-mirror-qa-20261107/pypi/${DIST}/${PIN}/json\"\
+        ; then\n    echo \"PyPI serves ${DIST} ${PIN}\"\n    exit 0\n  fi\n  sleep 30\ndone\necho \"::error::PyPI never served\
+        \ ${DIST} ${PIN}; not tagging a component that pins it.\"\nexit 1\n"
+    - name: Tag the mirror
+      if: env.CHANNEL == 'stable' || env.CHANNEL == 'dev'
+      env:
+        GIT_SSH_COMMAND: ssh -i ~/.ssh/mirror_key -o IdentitiesOnly=yes
+        VER: ${{ steps.release.outputs.version }}
+        TAG: ${{ steps.release.outputs.tag }}
+        SOURCE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+      run: "# Captures instead of `| grep -q .`: without pipefail a FAILED\n# ls-remote looks identical to \"tag absent\"\
+        ; a bare assignment under\n# set -e aborts loud instead. Every release is a new shared version,\n# so an existing\
+        \ tag only means this run already happened.\nexisting=$(git -C /tmp/mirror ls-remote --tags origin \"refs/tags/${TAG}\"\
+        )\nif [ -n \"$existing\" ]; then\n  echo \"mirror tag ${TAG} exists - nothing to do\"\n  exit 0\nfi\nif [ \"$CHANNEL\"\
+        \ = stable ]; then\n  # The tag message is the release body (the deploy key cannot call\n  # the API; the mirror's\
+        \ release-on-tag.yml reads the message).\n  # --cleanup=verbatim keeps the markdown headings `git tag -F`\n  # would\
+        \ otherwise strip as comments.\n  python3 scripts/build_mirror_release_notes.py \\\n    --tag \"$TAG\" --out /tmp/mirror_notes.md\n\
+        else\n  stable_exists=$(git -C /tmp/mirror ls-remote --tags origin \"refs/tags/v${VER}\")\n  if [ -n \"$stable_exists\"\
+        \ ]; then\n    echo \"v${VER} is already released as stable - skipping dev tag\"\n    exit 0\n  fi\n  # One line per\
+        \ pull request merged since the previous dev build.\n  python3 scripts/build_mirror_release_notes.py \\\n    --dev-pin\
+        \ \"${{ steps.release.outputs.pin }}\" \\\n    --dist \"${{ steps.release.outputs.dist }}\" \\\n    --source \"$SOURCE_SHA\"\
+        \ \\\n    --source-label \"${GITHUB_REPOSITORY}@${SOURCE_SHA}\" \\\n    --out /tmp/mirror_notes.md\nfi\necho \"---\
+        \ release notes for ${TAG} ---\"\ncat /tmp/mirror_notes.md\ncd /tmp/mirror\ngit tag -a \"${TAG}\" -F /tmp/mirror_notes.md\
+        \ --cleanup=verbatim\ngit push origin \"${TAG}\"\n"
+    outputs:
+      qa_tag: ${{ steps.release.outputs.tag }}
+      qa_pin: ${{ steps.release.outputs.pin }}
+      qa_dist: ${{ steps.release.outputs.dist }}
+      qa_channel: ${{ needs.gate.outputs.channel }}
+  qa_receipt:
+    name: QA workflow receipt
+    needs:
+    - gate
+    - sync
+    if: ${{ always() && vars.QA_ARMED == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        ref: ${{ github.workflow_sha }}
+    - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
+      with:
+        version: 0.13.4
+    - run: uv run -s .qa/runtime.py receipt
+      env:
+        QA_NEEDS: ${{ toJSON(needs) }}
+        QA_STAGE: ${{ vars.QA_STAGE }}
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: qa-workflow-receipt
+        path: qa-workflow-receipt.json
+        retention-days: 30
+'on':
+  push:
+    branches:
+    - master
+    paths:
+    - hacs.json
+    - LICENSE
+    - README.md
+    - .github/integration-mirror-readme-prefix.md
+    - scripts/build_mirror_readme.py
+    - .github/integration-mirror-workflows/**
+  workflow_run:
+    workflows:
+    - SemVer Release
+    - Publish Dev Channel
+    types:
+    - completed
+    branches:
+    - master
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: stable re-tags the latest stable release (recovery path when a release run flaked); dev cuts a v<next>-dev.N
+          pre-release from the current master snapshot, pinned to its already-published dev build. Dispatch from master only.
+        type: choice
+        options:
+        - stable
+        - dev
+        default: stable

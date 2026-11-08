@@ -1,0 +1,111 @@
+name: "🐛 Runtime Bug"
+description: "Report a bug that occurs while ha-mcp is running (errors, crashes, incorrect behavior)"
+title: "[BUG] "
+labels: ["bug", "runtime-bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 🐛 Report a Runtime Bug
+
+        Use this template when:
+        - You get an error message while using ha-mcp
+        - A tool returns incorrect or unexpected results
+        - Something crashes or stops working
+
+        **Not for startup issues** (use Startup/Installation Bug template instead).
+
+        > 📝 **Title tip:** replace the default `[BUG] ` with a one-line summary of what
+        > broke (e.g. `[BUG] ha_call_service times out on light.turn_on`), not a bare `[BUG]`.
+        >
+        > **Easier:** ask your AI agent to report it with the `ha_report_issue` tool and
+        > file the issue for you. It can open the issue itself (GitHub CLI, a GitHub
+        > connector, or your browser), save the report as a file for you to paste into a
+        > blank issue, or give you a link that opens an issue with the report filled in.
+
+  - type: checkboxes
+    id: connect_preflight
+    attributes:
+      label: "🔌 Connection Pre-flight"
+      description: |
+        If the symptom is that your AI client can't reach ha-mcp (rather than a tool
+        misbehaving once connected), rule these out first.
+        Details: [Claude.ai connects from my browser but the connector fails](https://homeassistant-ai.github.io/ha-mcp/faq/#claude-ai-hosted-requirements).
+      options:
+        - label: "My connector URL uses standard HTTPS with **no port** (`https://ha.example.com/...`, not `:8123`) — Anthropic's backend only connects on 443"
+        - label: "The URL loads on my **phone with Wi-Fi off**, so it is reachable from the public internet and not just my LAN"
+        - label: "Anthropic's egress range `160.79.104.0/21` is not blocked by a WAF, geo-block, or AI-bot filter (Cloudflare's \"Block AI training bots\" included)"
+        - label: "Not applicable — this isn't an AI-client connection problem"
+
+  - type: textarea
+    id: user_commentary
+    attributes:
+      label: "💬 What Happened?"
+      description: |
+        **In your own words** (not AI-generated), tell us:
+        - What were you trying to do?
+        - What went wrong?
+        - What do you think caused it?
+
+        **Examples:**
+        - "I tried to turn on a light but got a timeout error"
+        - "The automation tool says it created an automation, but it's not in Home Assistant"
+        - "Every time I search for entities, it returns 0 results even though I have 50+ devices"
+        - "I have no idea what happened, it just crashed"
+
+        **Note:** Just describe the problem - don't worry about being technical.
+      placeholder: |
+        Example: "I asked the agent to create an automation, it ran for a while then gave an error about 'invalid service'..."
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+
+        ## 🚨 Use the `ha_report_issue` Tool (Required)
+
+        **Tell your AI agent:**
+
+        > "I got an error: [describe the error from your first field]. Report it with the ha_report_issue tool and file the issue for me."
+
+        The agent will collect:
+        - Error messages and stack traces
+        - Environment information (versions, platform, etc.)
+        - Recent tool call history
+        - Relevant logs
+
+  - type: textarea
+    id: report
+    attributes:
+      label: "📋 ha_report_issue Report"
+      description: |
+        **Required.** Ask your AI agent: *"Report this with the ha_report_issue tool."* Run it in
+        the session where the problem happened. Paste the whole report it generates here (from its
+        Auto-Generated heading to the end), with tokens and passwords removed. It collects the
+        versions, install type, client, settings and tool calls we otherwise have to ask for.
+
+        If no report can exist, for example because ha-mcp does not start or connect or the problem
+        was found by reading the code, typing `N/A` here is acceptable; say why in the next field.
+      placeholder: "Paste the whole ha_report_issue report here, or N/A"
+    validations:
+      required: true
+
+  - type: textarea
+    id: no_report_reason
+    attributes:
+      label: "Why there is no ha_report_issue report"
+      description: |
+        If you typed N/A above, say why there is no report. A short reason, even "N/A", is enough.
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+
+        That's it! We'll investigate the bug and work on a fix.
+
+        **Privacy reminder:** Remove any sensitive data (tokens, passwords, personal names) before submitting.

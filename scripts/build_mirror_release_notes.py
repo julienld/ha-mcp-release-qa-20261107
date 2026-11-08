@@ -1,0 +1,274 @@
+"""Generate release notes for a homeassistant-ai/ha-mcp-integration mirror tag.
+
+The mirror's release-on-tag workflow turns each pushed tag into a GitHub
+release, but the deploy key that pushes the tag cannot call the GitHub API
+to set a rich release body -- so the body has to travel inside the annotated
+tag message itself. This script produces that message. For a stable release
+the component and the ha-mcp server it installs share one version (#2427), so
+the notes name that server and summarize what changed in the custom component
+(custom_components/ha_mcp_tools/) since the previous stable release, so HACS
+shows real release notes instead of a generic stub. For a development
+pre-release (``--dev-pin``) they list the changes since the previous dev build,
+one line per merged pull request.
+"""
+
+from __future__ import annotations
+
+import argparse
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+# Main repo's stable release tags look like v7.10.0; dev tags append
+# ".devN" (e.g. v7.10.0.dev778) and the floating "stable" tag isn't a
+# vX.Y.Z tag at all -- both must be excluded from stable-tag selection.
+_STABLE_TAG_RE = re.compile(r"^v\d+\.\d+\.\d+$")
+# Publish Dev Channel tags each build it uploads, e.g. v9.0.0.dev3100.
+_DEV_TAG_RE = re.compile(r"^v\d+\.\d+\.\d+\.dev\d+$")
+
+# Commit subjects that touch custom_components/ha_mcp_tools/ only
+# incidentally, via merge/publish mechanics -- not real component changes,
+# so they'd just be noise in release notes.
+_NOISE_SUBJECT_PREFIXES = ("chore(addon): publish dev addon version",)
+
+_CHANGELOG_URL = "https://github.com/homeassistant-ai/ha-mcp/releases"
+_UPGRADE_GUIDE_URL = (
+    "https://github.com/homeassistant-ai/ha-mcp/blob/master/"
+    "docs/in-process-server.md#upgrading-from-component-2x"
+)
+
+_COMPONENT_PATH = "custom_components/ha_mcp_tools/"
+
+
+def _version_key(tag: str) -> tuple[int, ...]:
+    """Numeric sort key: 'v7.10.0' -> (7, 10, 0), 'v9.0.0.dev3100' -> (9, 0, 0, 3100)."""
+    return tuple(map(int, re.findall(r"\d+", tag)))
+
+
+def select_stable_tags(
+    tags: list[str], current_tag: str | None = None
+) -> tuple[str | None, str]:
+    """Pick a stable release and its predecessor as (prev, curr).
+
+    Filters to tags matching vX.Y.Z (excludes dev tags like
+    'v7.10.0.dev778' and the floating 'stable' tag) and sorts numerically --
+    a lexical sort would put 'v7.10.0' before 'v7.9.0'. Returns (None, curr)
+    for the first stable release. Without current_tag, selects the newest.
+    """
+    stable = sorted(
+        (tag for tag in tags if _STABLE_TAG_RE.match(tag)), key=_version_key
+    )
+    if not stable:
+        raise ValueError("no stable tags (vX.Y.Z) found")
+    if current_tag is not None and current_tag not in stable:
+        raise ValueError(f"requested stable tag not found: {current_tag}")
+    index = stable.index(current_tag) if current_tag is not None else len(stable) - 1
+    return (stable[index - 1] if index else None), stable[index]
+
+
+def previous_dev_tag(tags: list[str], pin: str) -> str | None:
+    """The newest dev build tag older than the build for ``pin`` (e.g. '9.0.0.dev3100')."""
+    if not _DEV_TAG_RE.match(f"v{pin}"):
+        raise ValueError(f"not a dev build version: {pin}")
+    current = _version_key(pin)
+    older = [t for t in tags if _DEV_TAG_RE.match(t) and _version_key(t) < current]
+    return max(older, key=_version_key, default=None)
+
+
+def _filter_noise_subjects(subjects: list[str]) -> list[str]:
+    """Drop commit subjects that are automation noise, not component changes."""
+    # semantic-release commits each stable version as its bare number while
+    # stamping the component version and server pin, even on server-only bumps.
+    return [
+        s
+        for s in subjects
+        if not s.startswith(_NOISE_SUBJECT_PREFIXES)
+        and not _STABLE_TAG_RE.fullmatch(f"v{s}")
+        and "[skip ci]" not in s
+    ]
+
+
+def format_release_notes(
+    prev_tag: str | None,
+    curr_tag: str,
+    subjects: list[str],
+) -> str:
+    """Render the mirror tag's annotated-tag message as markdown.
+
+    `subjects` are commit subject lines touching custom_components/ha_mcp_tools/
+    in the range (prev_tag, curr_tag] of the main repo. `curr_tag` is the
+    release both the component and its server carry.
+    """
+    subjects = _filter_noise_subjects(subjects)
+    version = curr_tag.removeprefix("v")
+    lines = [
+        f"## HA-MCP — Manage Home Assistant with AI {version}",
+        "",
+        f"Installs the ha-mcp {version} server released with it; restart Home "
+        "Assistant after updating to run both.",
+        "",
+        "**Upgrading from component 2.x:** The Release channel, Automatic server "
+        "updates and server update entity are removed; update the component "
+        "through HACS or manually. In secret-URL "
+        "(`none`) mode, existing OAuth clients may need their callback added "
+        "to the allowlist before they can sign in again. "
+        f"[Upgrade guide]({_UPGRADE_GUIDE_URL}).",
+        "",
+    ]
+    if prev_tag is None:
+        lines.extend(["Initial component release.", ""])
+
+    if subjects:
+        since = prev_tag if prev_tag is not None else "this component's introduction"
+        lines.append(f"Component changes since {since}:")
+        lines.extend(f"- {subject}" for subject in subjects)
+    else:
+        lines.append(
+            f"No changes to {_COMPONENT_PATH} in this release; it updates the "
+            "server the component installs."
+        )
+
+    lines.append("")
+    lines.append(f"Full server changelog: {_CHANGELOG_URL}")
+    return "\n".join(lines) + "\n"
+
+
+def format_dev_release_notes(
+    pin: str, dist: str, source: str, subjects: list[str]
+) -> str:
+    """Render a development pre-release's tag message as markdown.
+
+    `subjects` are the commit subjects since the previous dev build; on master
+    each is a squash-merged pull request's title and number.
+    """
+    subjects = _filter_noise_subjects(subjects)
+    version = pin.split(".dev", 1)[0]
+    lines = [
+        f"## HA-MCP — Manage Home Assistant with AI {version} (development pre-release)",
+        "",
+        (
+            f"Snapshot of the custom component and its ha-mcp server from {source}, "
+            f"ahead of the {version} stable release. Installs {dist}=={pin}."
+        ),
+        "",
+        (
+            "You receive these builds because the HACS **Pre-release** switch is "
+            "enabled for this repository; turn it off to return to stable releases."
+        ),
+        "",
+    ]
+    if subjects:
+        lines.append("Changes since the previous pre-release:")
+        lines.extend(f"- {subject}" for subject in subjects)
+    else:
+        lines.append("No changes since the previous pre-release.")
+    return "\n".join(lines) + "\n"
+
+
+def _run_git(args: list[str], repo_dir: Path) -> str:
+    """Run a git command in repo_dir, returning stripped stdout.
+
+    Raises RuntimeError with git's stderr so callers surface an actionable
+    message instead of a bare CalledProcessError traceback.
+    """
+    result = subprocess.run(
+        ["git", *args],
+        cwd=repo_dir,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"git {' '.join(args)} failed: {result.stderr.strip()}")
+    return result.stdout.strip()
+
+
+def discover_stable_tags(
+    repo_dir: Path, current_tag: str | None = None
+) -> tuple[str | None, str]:
+    """Find the selected stable release and its predecessor in repo_dir."""
+    output = _run_git(["tag", "-l", "v*"], repo_dir)
+    tags = output.splitlines()
+    return select_stable_tags(tags, current_tag)
+
+
+def collect_component_subjects(
+    prev_tag: str | None, curr_tag: str, repo_dir: Path
+) -> list[str]:
+    """Commit subjects touching custom_components/ha_mcp_tools/ in (prev_tag, curr_tag]."""
+    range_arg = curr_tag if prev_tag is None else f"{prev_tag}..{curr_tag}"
+    output = _run_git(
+        ["log", "--format=%s", range_arg, "--", _COMPONENT_PATH], repo_dir
+    )
+    return output.splitlines()
+
+
+def collect_dev_subjects(pin: str, source: str, repo_dir: Path) -> list[str]:
+    """Commit subjects in (previous dev build, source]; none without a previous one."""
+    output = _run_git(["tag", "-l", "v*.dev*"], repo_dir)
+    previous = previous_dev_tag(output.splitlines(), pin)
+    if previous is None:
+        return []
+    output = _run_git(["log", "--format=%s", f"{previous}..{source}"], repo_dir)
+    return output.splitlines()
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--out",
+        type=Path,
+        required=True,
+        help="Destination path for the generated release notes",
+    )
+    parser.add_argument(
+        "--tag",
+        help="Stable release being published (defaults to the newest stable tag)",
+    )
+    parser.add_argument(
+        "--dev-pin",
+        help="Write a development pre-release's notes for this build (e.g. 9.0.0.dev3100)",
+    )
+    parser.add_argument(
+        "--dist", default="ha-mcp-dev", help="Distribution the build installs"
+    )
+    parser.add_argument(
+        "--source",
+        default="HEAD",
+        help="Commit the pre-release snapshots (a sha or ref in --repo-dir)",
+    )
+    parser.add_argument(
+        "--source-label",
+        help="How the notes name the snapshotted commit (defaults to --source)",
+    )
+    parser.add_argument(
+        "--repo-dir",
+        type=Path,
+        default=Path.cwd(),
+        help="Main repository checkout (defaults to cwd)",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    try:
+        if args.dev_pin:
+            subjects = collect_dev_subjects(args.dev_pin, args.source, args.repo_dir)
+            notes = format_dev_release_notes(
+                args.dev_pin, args.dist, args.source_label or args.source, subjects
+            )
+        else:
+            prev_tag, curr_tag = discover_stable_tags(args.repo_dir, args.tag)
+            subjects = collect_component_subjects(prev_tag, curr_tag, args.repo_dir)
+            notes = format_release_notes(prev_tag, curr_tag, subjects)
+    except (RuntimeError, ValueError) as e:
+        print(f"build_mirror_release_notes: {e}", file=sys.stderr)
+        return 1
+    args.out.write_text(notes, encoding="utf-8")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,208 @@
+name: SemVer Release
+permissions:
+  contents: read
+concurrency:
+  group: master-write
+  cancel-in-progress: false
+  queue: max
+env:
+  PYTHON_VERSION: '3.13'
+jobs:
+  biweekly-gate:
+    name: Biweekly schedule gate
+    if: ${{ vars.QA_ARMED == 'true' && github.sha != vars.QA_BOOTSTRAP_SHA && (github.repository == 'julienld/ha-mcp-release-qa-20261107')
+      }}
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.gate.outputs.should_run }}
+    steps:
+    - name: Check if this is a release week
+      id: gate
+      run: "if [ \"${{ github.event_name }}\" != \"schedule\" ]; then\n  echo \"should_run=true\" >> $GITHUB_OUTPUT\n  echo\
+        \ \"Manual or non-scheduled trigger, proceeding\"\n  exit 0\nfi\nWEEK=$((10#$(date +%V)))\nif [ $((WEEK % 2)) -eq\
+        \ 0 ]; then\n  echo \"should_run=true\" >> $GITHUB_OUTPUT\n  echo \"Even week ($WEEK), proceeding with release\"\n\
+        else\n  echo \"should_run=false\" >> $GITHUB_OUTPUT\n  echo \"Odd week ($WEEK), skipping release\"\nfi\n"
+  check-changes:
+    name: Check for releasable changes
+    needs: biweekly-gate
+    if: needs.biweekly-gate.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      has_changes: ${{ steps.check.outputs.has_changes }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        fetch-depth: 0
+    - name: Check for releasable commits since last tag
+      id: check
+      run: "# Get latest non-dev tag\nLATEST_TAG=$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude '*dev*' 2>/dev/null\
+        \ || echo \"\")\n\nif [ -z \"$LATEST_TAG\" ]; then\n  echo \"No previous release found, proceeding\"\n  echo \"has_changes=true\"\
+        \ >> $GITHUB_OUTPUT\n  exit 0\nfi\n\necho \"Latest stable tag: $LATEST_TAG\"\n\n# Match every commit form that Python\
+        \ Semantic Release can bump.\nCHANGES=$(git log $LATEST_TAG..HEAD --oneline -E \\\n  --grep=\"^(feat|fix|perf|refactor)(\\\
+        (.+\\))?!?:\" \\\n  --grep=\"^[a-z]+(\\(.+\\))?!:\" \\\n  --grep=\"^BREAKING[ -]CHANGE:\" | head -5)\n\nif [ -n \"\
+        $CHANGES\" ] && [ \"${{ inputs.force }}\" = \"true\" ]; then\n  echo \"::error::Force pins the next version to patch,\
+        \ but releasable commits exist:\"\n  echo \"$CHANGES\"\n  echo \"Dispatch again without force so semantic-release\
+        \ selects the correct level.\"\n  exit 1\nfi\n\nif [ -n \"$CHANGES\" ] || [ \"${{ inputs.force }}\" = \"true\" ];\
+        \ then\n  echo \"has_changes=true\" >> $GITHUB_OUTPUT\n  echo \"Changes found:\"\n  echo \"$CHANGES\"\nelse\n  echo\
+        \ \"has_changes=false\" >> $GITHUB_OUTPUT\n  echo \"No releasable changes since $LATEST_TAG\"\nfi\n"
+  validate-docker:
+    name: Validate Docker Build
+    if: ${{ vars.QA_ARMED == 'true' && github.sha != vars.QA_BOOTSTRAP_SHA && (github.repository == 'julienld/ha-mcp-release-qa-20261107')
+      }}
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        submodules: true
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
+    - name: Build addon image (no push)
+      uses: ./.github/actions/docker-build-python-base-fallback
+      with:
+        context: .
+        file: ./homeassistant-addon/Dockerfile
+        push: false
+        platforms: linux/amd64
+  semantic-release:
+    needs:
+    - check-changes
+    - validate-docker
+    if: needs.check-changes.outputs.has_changes == 'true'
+    name: Semantic Release
+    runs-on: ubuntu-latest
+    outputs:
+      released: ${{ steps.semantic.outputs.released }}
+      version: ${{ steps.semantic.outputs.version }}
+    permissions:
+      contents: write
+      id-token: write
+      pull-requests: write
+      issues: write
+    steps:
+    - name: Generate GitHub App token
+      id: app-token
+      uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510
+      with:
+        app-id: ${{ secrets.RELEASE_APP_ID }}
+        private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+        permission-contents: write
+      continue-on-error: true
+      if: ${{ github.repository == 'homeassistant-ai/ha-mcp' }}
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        fetch-depth: 0
+        token: ${{ steps.app-token.outputs.token || secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+    - name: Python Semantic Release
+      id: semantic
+      uses: python-semantic-release/python-semantic-release@b700dbeb1f431a0fcc30a79f3f0869407fe07278
+      with:
+        github_token: ${{ steps.app-token.outputs.token || secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+        verbosity: '2'
+        force: ${{ inputs.force && 'patch' || '' }}
+        vcs_release: 'false'
+    - name: Create draft GitHub release
+      if: steps.semantic.outputs.released == 'true'
+      env:
+        GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+      run: "VERSION=\"${{ steps.semantic.outputs.version }}\"\nTAG=\"v${VERSION}\"\n\n# Extract changelog for this version,\
+        \ capped at GitHub's release-body limit\n# (an over-long body is a 422 that strands the already-pushed tag).\npython3\
+        \ scripts/extract_release_notes.py --version \"$VERSION\" --out release_notes.md\nif [ ! -s release_notes.md ]; then\n\
+        \  # An empty extract means either no \"## v${VERSION}\" heading or an\n  # empty section, and the file cannot tell\
+        \ those apart \u2014 so warn\n  # instead of letting a one-line release body pass for a normal run.\n  echo \"::warning::no\
+        \ changelog section extracted for v${VERSION} \u2014 releasing with fallback notes\"\n  echo \"Release v${VERSION}\"\
+        \ > release_notes.md\nfi\n\n# A draft until the last step of this job publishes it.\ngh release create \"$TAG\" \\\
+        \n  --title \"$TAG\" \\\n  --notes-file release_notes.md \\\n  --draft\n\necho \"\u2713 Created draft release $TAG\"\
+        \n"
+    - name: Copy changelog to addon directory
+      if: steps.semantic.outputs.released == 'true'
+      run: "set -e\ncp CHANGELOG.md homeassistant-addon/CHANGELOG.md\ngit config user.name \"github-actions[bot]\"\ngit config\
+        \ user.email \"github-actions[bot]@users.noreply.github.com\"\ngit add homeassistant-addon/CHANGELOG.md\ngit diff\
+        \ --staged --quiet || git commit -m \"chore(addon): sync changelog for Home Assistant add-on [skip ci]\"\n# Master\
+        \ can advance between checkout and this push (bot commits from\n# other workflows); retry with a rebase instead of\
+        \ failing the release.\n# Mirrors the loop in sync-tool-docs.yml.\nfor attempt in 1 2 3 4 5; do\n  if git push; then\n\
+        \    echo \"Synced addon changelog (attempt ${attempt}).\"\n    exit 0\n  fi\n  echo \"Push rejected on attempt ${attempt};\
+        \ rebasing onto origin/master and retrying.\"\n  # Abort a conflicted rebase so later attempts fail for the real reason.\n\
+        \  git pull --rebase origin master || {\n    git rebase --abort 2>/dev/null || true\n    echo \"::error::Rebase onto\
+        \ origin/master failed; aborting retries.\"\n    exit 1\n  }\ndone\necho \"::error::Could not push addon changelog\
+        \ sync after 5 attempts.\"\nexit 1\n"
+    - name: Update stable git tag
+      if: steps.semantic.outputs.released == 'true'
+      run: "# Move the 'stable' tag to point to the new release\nVERSION=\"${{ steps.semantic.outputs.version }}\"\necho \"\
+        Updating 'stable' tag to point to v$VERSION\"\n\n# Delete existing stable tag (local and remote)\ngit tag -d stable\
+        \ 2>/dev/null || true\ngit push origin :refs/tags/stable 2>/dev/null || true\n\n# Create new stable tag pointing to\
+        \ the release commit\ngit tag stable \"v$VERSION\"\ngit push origin stable\n\necho \"\u2713 'stable' tag now points\
+        \ to v$VERSION\"\n"
+    - name: Publish GitHub release
+      if: steps.semantic.outputs.released == 'true'
+      env:
+        GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+      run: '# Last, so a failed changelog push or stable-tag update leaves a draft
+
+        # instead of a public release with no PyPI or Docker publish behind it.
+
+        gh release edit "v${{ steps.semantic.outputs.version }}" --draft=false
+
+        '
+  build-addon:
+    needs: semantic-release
+    if: needs.semantic-release.outputs.released == 'true'
+    uses: ./.github/workflows/addon-publish.yml
+    with:
+      version: ${{ needs.semantic-release.outputs.version }}
+    permissions:
+      contents: read
+      packages: write
+  update-addon-config:
+    needs:
+    - semantic-release
+    - build-addon
+    if: needs.semantic-release.outputs.released == 'true'
+    uses: ./.github/workflows/_update-addon-config.yml
+    with:
+      version: ${{ needs.semantic-release.outputs.version }}
+    secrets:
+      RELEASE_APP_ID: ${{ secrets.RELEASE_APP_ID }}
+      RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+      RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+    permissions:
+      contents: write
+  qa_receipt:
+    name: QA workflow receipt
+    needs:
+    - biweekly-gate
+    - check-changes
+    - validate-docker
+    - semantic-release
+    - build-addon
+    - update-addon-config
+    if: ${{ always() && vars.QA_ARMED == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        ref: ${{ github.workflow_sha }}
+    - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
+      with:
+        version: 0.13.4
+    - run: uv run -s .qa/runtime.py receipt
+      env:
+        QA_NEEDS: ${{ toJSON(needs) }}
+        QA_STAGE: ${{ vars.QA_STAGE }}
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: qa-workflow-receipt
+        path: qa-workflow-receipt.json
+        retention-days: 30
+'on':
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Force a patch when no fix, feat, or perf commit exists
+        required: false
+        default: 'false'
+        type: boolean
