@@ -363,6 +363,15 @@ def wait_release(repo: str, tag: str) -> dict:
     raise TimeoutError("The real mirror release did not become available")
 
 
+def site_matches(site: dict, commit: str, version: str, parent_run: int) -> bool:
+    return (
+        site.get("commit") == commit
+        and site.get("version") == version
+        and site.get("event") == "workflow_run"
+        and site.get("parent_run_id") == parent_run
+    )
+
+
 def verify_chain(parent: Path) -> None:
     context()
     data = json.loads(parent.read_text())
@@ -466,10 +475,7 @@ def verify_chain(parent: Path) -> None:
                     timeout=15,
                 ) as response:
                     site = json.load(response)
-                if (
-                    site.get("commit") == source_commit["sha"]
-                    and site.get("version") == pin
-                ):
+                if site_matches(site, source_commit["sha"], pin, data["parent"]["id"]):
                     break
             except (OSError, ValueError):
                 pass
