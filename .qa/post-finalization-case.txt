@@ -1,0 +1,2 @@
+Controlled QA case: release finalization succeeds, then the server Docker job fails.
+Mirror and site must still consume finalized-tag evidence.
