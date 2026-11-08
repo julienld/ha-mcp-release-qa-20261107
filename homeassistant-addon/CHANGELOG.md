@@ -3,6 +3,24 @@
 <!-- version list -->
 
 
+## v9.1.3 (2026-11-08)
+
+No user-facing changes.
+
+---
+<details>
+<summary>Internal Changes</summary>
+
+
+### Chores
+
+- **release**: Reconcile QA adapters with generated release commits
+  ([`5bf9ec9`](https://github.com/julienld/ha-mcp-release-qa-20261107/commit/5bf9ec97ae795e28d2e48485719f2f8124d7e993))
+- **addon**: Publish version 9.1.2 [skip ci]
+  ([`9d88a0f`](https://github.com/julienld/ha-mcp-release-qa-20261107/commit/9d88a0f15f9a5ec4cff55259453ba7a0a2170fc9))
+</details>
+
+
 ## v9.1.2 (2026-11-08)
 
 No user-facing changes.
@@ -21,6 +39,10 @@ No user-facing changes.
 
 ### Chores
 
+- **release**: Merge QA causal verification adapter
+  ([`e44290a`](https://github.com/julienld/ha-mcp-release-qa-20261107/commit/e44290a9cf026faec7f65a3bf30d744d2e6823da))
+- **release**: Isolate site data and verify release-event causality
+  ([`d0f0379`](https://github.com/julienld/ha-mcp-release-qa-20261107/commit/d0f03798d002b94f138a0fef13791dc57496690a))
 - **release**: Merge QA site-data adapter
   ([`ee0d592`](https://github.com/julienld/ha-mcp-release-qa-20261107/commit/ee0d59219ae2802059900c89836d40e80413fd60))
 - **release**: Use measured zero-star data in the isolated QA site
